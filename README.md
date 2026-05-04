@@ -124,6 +124,7 @@ REDIS_HOST=localhost
 REDIS_PORT=6379
 
 KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+```
 
 ## 6. 토큰 정책
 
@@ -131,7 +132,7 @@ KAFKA_BOOTSTRAP_SERVERS=localhost:9092
 
 - 클라이언트는 다음 형식으로 Access Token을 전달한다.
 
-Authorization: Bearer {access_token}
+`Authorization: Bearer {access_token}`
 
 ### JWT Claim
 
