@@ -1,36 +1,35 @@
-# Python
+# Python -------------------------------
 __pycache__/
 *.py[cod]
 *.pyd
 
-# Virtual environments
+# Virtual environments -----------------
 venv/
 .venv/
 env/
 .env/
 
-# Environment files (secrets)
+# Environment files (secrets) ----------
 *.env
 !.env.example
 
-# Packaging / build
+# Packaging / build --------------------
 *.egg-info/
 dist/
 build/
 
-# IDE / OS
+# IDE / OS -----------------------------
 .DS_Store
 .vscode/
 .idea/
 
-# Test / coverage
+# Test / coverage ----------------------
 .pytest_cache/
 .coverage
 htmlcov/
 
-# Logs
+# Logs ---------------------------------
 *.log
 
-# Docs
+# Docs ---------------------------------
 docs/
-

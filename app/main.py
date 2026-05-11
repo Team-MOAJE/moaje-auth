@@ -1,9 +1,16 @@
-"""FastAPI application entrypoint
+"""FastAPI 애플리케이션 진입점"""
 
-## 포함할 구성요소(예정)
-- 라우터 등록(`app/api.py`)
-- CORS/미들웨어
-- 헬스체크(`/health`)
-- DB 연결 라이프사이클 관리
-"""
+from __future__ import annotations
 
+from fastapi import FastAPI
+
+from app.api.auth import router as auth_router
+
+
+app = FastAPI(title="moaje-auth")
+app.include_router(auth_router)
+
+# 헬스체크 ... 간단하게 status만 구현함.
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok"}
