@@ -1,6 +1,6 @@
 # moaje-auth 기술 가이드 및 컨벤션
 
-`moaje-auth` 인증/인가 서비스의 DB 설계, 토큰 정책, 보안 컨벤션, 서비스 간 통신 방식을 정의합니다.
+`moaje-auth` 인증/인가 서비스의 현재 구현 상태, DB 설계, 토큰 정책, 보안 컨벤션을 정리합니다.
 
 ---
 
@@ -13,12 +13,12 @@
 - 사용자 인증
 - JWT Access Token / Refresh Token 발급
 - Refresh Token Rotation
-- OAuth 연동(Kakao, Google)
-- MFA(TOTP)
-- WebAuthn/FIDO2 인증 정보 관리
+- OAuth 연동(Kakao, Google) 예정
+- MFA(TOTP) 예정
+- WebAuthn/FIDO2 인증 정보 관리 예정
 - Account Token 관리
-- 내부 서비스용 gRPC 인터페이스 제공
-- Auth 관련 Kafka 이벤트 발행
+- 내부 서비스용 gRPC 인터페이스 제공 예정
+- Auth 관련 Kafka 이벤트 발행 예정
 
 ---
 
@@ -31,16 +31,16 @@
 | DB | MySQL 8.x |
 | ORM | SQLAlchemy |
 | Migration | Alembic |
-| Password Hash | bcrypt |
+| PIN Hash | bcrypt |
 | Token Hash | SHA-256 |
 | JWT | RS256 권장 / 초기 구현은 HS256 가능 |
-| MFA | TOTP(PyOTP) |
-| OAuth | Kakao, Google / OAuth 2.0 |
+| MFA | TOTP 예정 |
+| OAuth | Kakao, Google / OAuth 2.0 예정 |
 | Encryption | AES-256-GCM |
 | Key Management | AWS Secrets Manager |
-| Internal API | gRPC |
-| Event Stream | Kafka |
-| Cache / Session | Redis |
+| Internal API | REST token validate 구현 / gRPC 예정 |
+| Event Stream | Kafka 예정 |
+| Cache / Session | Redis 예정 |
 | Transport Security | TLS 1.3, gRPC-TLS |
 | Monitoring | Slack Webhook |
 | Git Security | .gitignore, git-secrets |
@@ -108,23 +108,68 @@ Moaje 프로젝트의 통신 방식은 다음과 같이 구분합니다.
 APP_NAME=moaje-auth
 APP_ENV=local
 
-DATABASE_URL=mysql+pymysql://user:password@localhost:3306/moaje_auth?charset=utf8mb4
+DATABASE_URL=mysql+asyncmy://user:password@localhost:3306/moaje_auth?charset=utf8mb4
 
-JWT_ALGORITHM=HS256
-JWT_SECRET_KEY=
+SECRET_KEY=
+ALGORITHM=HS256
+JWT_ISSUER=moaje-auth
+# JWT_AUDIENCE=moaje-services
 ACCESS_TOKEN_EXPIRE_MINUTES=30
 REFRESH_TOKEN_EXPIRE_DAYS=14
 
 AES_MASTER_KEY=
-AES_KEY_VERSION=1
+KEY_VERSION=1
 
-REDIS_HOST=localhost
-REDIS_PORT=6379
-
-KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+# 추후 사용 예정
+# REDIS_HOST=localhost
+# REDIS_PORT=6379
+# KAFKA_BOOTSTRAP_SERVERS=localhost:9092
 ```
 
-## 6. 토큰 정책
+AES 키는 32바이트 URL-safe base64 값을 사용합니다.
+
+```bash
+python -c "import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"
+```
+
+## 6. 현재 REST API
+
+현재 구현된 REST API는 다음과 같습니다.
+
+| Method | Path | 설명 |
+| --- | --- | --- |
+| POST | `/api/auth/login` | PIN 로그인 및 access/refresh token 발급 |
+| POST | `/api/auth/refresh` | refresh token rotation |
+| POST | `/api/auth/logout` | refresh token 폐기 |
+| POST | `/api/auth/token/validate` | body 기반 access token 검증 |
+| GET | `/api/auth/token/validate` | Authorization Bearer 기반 access token 검증 |
+| POST | `/api/auth/account-token` | account token 생성 |
+| POST | `/api/auth/account-token/validate` | account token 검증 |
+| GET | `/health` | 헬스체크 |
+
+### Docker 실행
+
+앱과 MySQL을 함께 올릴 때는 Docker Compose를 사용합니다.
+
+```bash
+docker compose up --build
+```
+
+컨테이너가 뜬 뒤 DB 마이그레이션을 적용합니다.
+
+```bash
+docker compose exec app alembic upgrade head
+```
+
+헬스체크:
+
+```bash
+curl http://localhost:8000/health
+```
+
+Compose 환경에서는 MySQL이 호스트 `3307` 포트로 노출됩니다.
+
+## 7. 토큰 정책
 
 ### Access Token
 
@@ -150,7 +195,7 @@ JWT Claim은 최소화한다.
 
 ---
 
-## 7. Refresh Token 정책
+## 8. Refresh Token 정책
 
 Refresh Token은 원문을 저장하지 않는다.
 
@@ -166,13 +211,13 @@ refresh_token 원문 → SHA-256 → token_hash 저장
 
 ---
 
-## 8. 인증 컨벤션
+## 9. 인증 컨벤션
 
-### Password
+### PIN
 
-- 비밀번호는 bcrypt로 해싱한다.
-- 평문 비밀번호는 저장하지 않는다.
-- 로그에 비밀번호를 출력하지 않는다.
+- PIN은 bcrypt로 해싱한다.
+- 평문 PIN은 저장하지 않는다.
+- 로그에 PIN을 출력하지 않는다.
 
 ### OAuth
 
@@ -195,7 +240,7 @@ refresh_token 원문 → SHA-256 → token_hash 저장
 
 ---
 
-## 9. Account Token 정책
+## 10. Account Token 정책
 
 계좌번호는 다른 서비스에 직접 노출하지 않는다.
 
@@ -217,7 +262,7 @@ refresh_token 원문 → SHA-256 → token_hash 저장
 
 ---
 
-## 10. 암호화 / 키 관리
+## 11. 암호화 / 키 관리
 
 저장 암호화 대상:
 
@@ -240,9 +285,9 @@ refresh_token 원문 → SHA-256 → token_hash 저장
 
 ---
 
-## 11. gRPC 정책
+## 12. gRPC 정책
 
-서비스 간 동기 요청/응답 통신은 gRPC를 사용한다.
+서비스 간 동기 요청/응답 통신은 추후 gRPC를 사용한다. 현재는 REST `/api/auth/token/validate`로 access token 검증을 제공한다.
 
 Auth 서비스 주요 기능:
 
@@ -268,9 +313,9 @@ Auth 서비스 주요 기능:
 
 ---
 
-## 12. Kafka 이벤트 정책
+## 13. Kafka 이벤트 정책
 
-Auth 도메인에서 발생한 사건은 Kafka 이벤트로 발행한다.
+Auth 도메인에서 발생한 사건은 추후 Kafka 이벤트로 발행한다.
 
 예시:
 
@@ -288,7 +333,7 @@ Auth 도메인에서 발생한 사건은 Kafka 이벤트로 발행한다.
 
 ---
 
-## 13. Redis 사용 계획
+## 14. Redis 사용 계획
 
 Redis 사용 용도:
 
@@ -302,7 +347,7 @@ Redis 사용 용도:
 
 ---
 
-## 14. 로깅 / 모니터링 정책
+## 15. 로깅 / 모니터링 정책
 
 로그 금지 대상:
 
@@ -323,7 +368,7 @@ Redis 사용 용도:
 
 ---
 
-## 15. Git 보안 컨벤션
+## 16. Git 보안 컨벤션
 
 - .env 커밋 금지
 - secret key 커밋 금지
@@ -333,16 +378,19 @@ Redis 사용 용도:
 
 ---
 
-## 16. 초기 구현 범위
+## 17. 초기 구현 범위
 
-초기 구현:
+현재 구현:
 
 - FastAPI health check
-- DB 연결
-- users 테이블 모델
-- JWT Access Token 발급
+- Alembic 기반 Auth DB 스키마
+- PIN 기반 로그인
+- JWT Access Token 발급 및 검증
 - Refresh Token 해시 저장
-- gRPC proto 연동 준비
+- Refresh Token Rotation
+- REST 기반 token validate API
+- AES-256-GCM 암복호화 유틸
+- Account Token 생성/검증 API
 - Dockerfile 작성
 
 추후 확장:

@@ -1,1 +1,1 @@
-"""Repository 패키지."""
+"""Repository 패키지"""

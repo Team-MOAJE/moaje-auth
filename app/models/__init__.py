@@ -1,4 +1,4 @@
-"""SQLAlchemy 모델 export."""
+"""SQLAlchemy 모델 export용"""
 
 from app.models.auth import (
     AccountTokenMapping,

@@ -12,6 +12,8 @@ env/
 # Environment files (secrets) ----------
 *.env
 !.env.example
+.env
+.env.*
 
 # Packaging / build --------------------
 *.egg-info/
@@ -22,14 +24,26 @@ build/
 .DS_Store
 .vscode/
 .idea/
+.zed/
 
 # Test / coverage ----------------------
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyright/
 .coverage
+coverage.xml
 htmlcov/
 
 # Logs ---------------------------------
 *.log
 
+# Docker -------------------------------
+Dockerfile
+.dockerignore
+docker-compose.yml
+docker-compose.override.yml
+
 # Docs ---------------------------------
 docs/
+TODO.md

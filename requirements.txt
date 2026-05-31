@@ -1,10 +1,13 @@
 fastapi
 uvicorn[standard]
 sqlalchemy
+greenlet
 alembic
 asyncmy
 python-jose[cryptography]
-passlib[bcrypt]
+cryptography
+bcrypt
 python-dotenv
 pydantic
 pydantic-settings
+pyright

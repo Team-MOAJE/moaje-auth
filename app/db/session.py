@@ -1,15 +1,14 @@
-"""SQLAlchemy 엔진, 세션, ORM Base 설정."""
+"""SQLAlchemy 엔진, 세션, ORM Base 설정 등"""
 
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 
-from sqlalchemy import MetaData
+from sqlalchemy import MetaData, create_engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.core.config import get_settings
-
 
 MYSQL_NAMING_CONVENTION = {
     "ix": "ix_%(column_0_label)s",
@@ -25,9 +24,11 @@ class Base(DeclarativeBase):
 
 
 settings = get_settings()
-engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+engine = create_engine(settings.database_url, pool_pre_ping=True, future=True)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+async_engine = create_async_engine(settings.database_url, pool_pre_ping=True)
 AsyncSessionLocal = async_sessionmaker(
-    bind=engine,
+    bind=async_engine,
     autoflush=False,
     expire_on_commit=False,
 )
