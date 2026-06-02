@@ -10,7 +10,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.auth import AccountTokenMapping, RefreshToken, User
+from app.models.auth import AccountTokenMapping, PinCredential, RefreshToken, User
 
 
 async def get_user_by_email(db: AsyncSession, email: str) -> User | None:
@@ -23,6 +23,20 @@ async def get_user_by_id(db: AsyncSession, user_id: int) -> User | None:
     stmt = select(User).where(User.user_id == user_id)
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
+
+
+async def create_pin_user(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    email: str,
+    pin_hash: str,
+) -> User:
+    user = User(user_id=user_id, email=email, is_active=1)
+    user.pin_credential = PinCredential(pin_hash=pin_hash)
+    db.add(user)
+    await db.flush()
+    return user
 
 
 async def create_refresh_token(

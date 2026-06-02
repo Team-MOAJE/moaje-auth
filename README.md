@@ -138,6 +138,7 @@ python -c "import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).dec
 
 | Method | Path | 설명 |
 | --- | --- | --- |
+| POST | `/api/auth/register` | PIN 기반 회원가입 |
 | POST | `/api/auth/login` | PIN 로그인 및 access/refresh token 발급 |
 | POST | `/api/auth/refresh` | refresh token rotation |
 | POST | `/api/auth/logout` | refresh token 폐기 |
@@ -384,13 +385,13 @@ Redis 사용 용도:
 
 - FastAPI health check
 - Alembic 기반 Auth DB 스키마
-- PIN 기반 로그인
+- PIN 기반 회원가입/로그인
 - JWT Access Token 발급 및 검증
 - Refresh Token 해시 저장
 - Refresh Token Rotation
 - REST 기반 token validate API
 - AES-256-GCM 암복호화 유틸
-- Account Token 생성/검증 API
+- Account Token 매핑 로직
 - Dockerfile 작성
 
 추후 확장:

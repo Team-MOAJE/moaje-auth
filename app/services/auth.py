@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+import time
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -15,6 +16,7 @@ from app.core.security import (
     TokenValidationError,
     create_access_token,
     generate_refresh_token,
+    hash_pin,
     hash_token,
     utc_now,
     verify_pin,
@@ -29,6 +31,10 @@ class AuthError(ValueError):
 
     def __init__(self, message: str | None = None) -> None:
         super().__init__(message or self.default_message)
+
+
+class DuplicateUserError(AuthError):
+    default_message = "이미 가입된 사용자입니다."
 
 
 class UserNotFoundError(AuthError):
@@ -72,6 +78,33 @@ class ValidatedAccountToken:
     is_valid: bool
     user_id: int | None = None
     is_active: bool = False
+
+
+def generate_user_id() -> int:
+    # 임시 Snowflake 대체값
+    return (int(time.time() * 1000) << 16) | secrets.randbelow(1 << 16)
+
+
+async def register_with_pin(
+    db: AsyncSession, *, email: str, pin: str
+) -> tuple[int, str, bool]:
+    existing_user = await auth_repository.get_user_by_email(db, email)
+    if existing_user:
+        raise DuplicateUserError("Email already registered")
+
+    try:
+        user = await auth_repository.create_pin_user(
+            db,
+            user_id=generate_user_id(),
+            email=email,
+            pin_hash=hash_pin(pin),
+        )
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise DuplicateUserError("Email already registered") from exc
+
+    return user.user_id, user.email, bool(user.is_active)
 
 
 async def issue_tokens(

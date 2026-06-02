@@ -34,6 +34,8 @@ async def trace_id_middleware(request: Request, call_next: Any) -> JSONResponse:
 
 
 def _validation_error_code(path: str) -> tuple[str, str]:
+    if path.endswith("/register"):
+        return "AUTH-400-002", "회원가입 요청 검증에 실패했습니다."
     if path.endswith("/login"):
         return "AUTH-400-001", "로그인 요청 검증에 실패했습니다."
     return "AUTH-400-004", "요청값 검증에 실패했습니다."

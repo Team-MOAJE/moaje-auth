@@ -20,6 +20,8 @@ from app.schemas.auth import (
     LogoutRequest,
     MessageResponse,
     RefreshRequest,
+    RegisterRequest,
+    RegisterResponse,
     TokenResponse,
     ValidateAccountTokenRequest,
     ValidateAccountTokenResponse,
@@ -30,6 +32,37 @@ from app.schemas.common import ApiResponse
 from app.services import auth as auth_service
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+@router.post(
+    "/register",
+    response_model=ApiResponse[RegisterResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+async def register(
+    request: Request,
+    payload: RegisterRequest,
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    try:
+        user_id, email, is_active = await auth_service.register_with_pin(db, email=payload.email, pin=payload.pin)
+    except auth_service.DuplicateUserError as exc:
+        return error_response(
+            request,
+            status_code=status.HTTP_409_CONFLICT,
+            code="AUTH-409-001",
+            message="이미 가입된 사용자입니다.",
+            reason=str(exc),
+        )
+
+    data = RegisterResponse(user_id=user_id, email=email, is_active=is_active)
+    return success_response(
+        request,
+        status_code=status.HTTP_201_CREATED,
+        code="AUTH-201-001",
+        message="회원가입이 완료되었습니다.",
+        data=data.model_dump(),
+    )
 
 
 @router.post("/login", response_model=ApiResponse[TokenResponse])

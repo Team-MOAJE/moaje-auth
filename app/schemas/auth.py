@@ -5,6 +5,17 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class RegisterRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+    pin: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
+
+
+class RegisterResponse(BaseModel):
+    user_id: int
+    email: str
+    is_active: bool
+
+
 class LoginRequest(BaseModel):
     email: str = Field(..., min_length=3, max_length=255)
     pin: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
