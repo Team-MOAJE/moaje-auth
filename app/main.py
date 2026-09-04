@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 from uuid import uuid4
 
@@ -17,11 +19,22 @@ from app.core.responses import (
     error_response,
     success_response,
 )
+from app.rpc.server import create_server
 from app.schemas.auth import HealthResponse
 from app.schemas.common import ApiResponse
 
 
-app = FastAPI(title="moaje-auth")
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    grpc_server = create_server()
+    await grpc_server.start()
+    try:
+        yield
+    finally:
+        await grpc_server.stop(grace=5)
+
+
+app = FastAPI(title="moaje-auth", lifespan=lifespan)
 app.include_router(auth_router)
 
 

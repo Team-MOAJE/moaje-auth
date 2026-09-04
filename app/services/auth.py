@@ -229,6 +229,11 @@ def validate_access_token(access_token: str) -> ValidatedAccessToken:
     )
 
 
+async def is_mfa_required(db: AsyncSession, *, user_id: int) -> bool:
+    mfa_config = await auth_repository.get_mfa_config_by_user_id(db, user_id)
+    return bool(mfa_config and mfa_config.is_enabled)
+
+
 def generate_account_token() -> str:
     return f"acct_{secrets.token_urlsafe(32)}"
 

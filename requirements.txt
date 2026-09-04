@@ -10,4 +10,7 @@ bcrypt
 python-dotenv
 pydantic
 pydantic-settings
+grpcio
+grpcio-tools
+protobuf
 pyright

@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     aes_master_key: str = Field(default="change-me", alias="AES_MASTER_KEY")
     key_version: int = Field(default=1, alias="KEY_VERSION")
 
+    grpc_port: int = Field(default=50051, alias="GRPC_PORT")
+    grpc_tls_cert: str | None = Field(default=None, alias="GRPC_TLS_CERT")
+    grpc_tls_key: str | None = Field(default=None, alias="GRPC_TLS_KEY")
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

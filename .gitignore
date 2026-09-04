@@ -47,3 +47,7 @@ docker-compose.override.yml
 # Docs ---------------------------------
 docs/
 TODO.md
+
+# TLS certs (local dev only) ------------
+.dev-certs/
+*.pem

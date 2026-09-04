@@ -1,6 +1,6 @@
 {
   "include": ["app", "alembic"],
-  "exclude": ["**/__pycache__"],
+  "exclude": ["**/__pycache__", "app/rpc/proto"],
   "venvPath": ".",
   "venv": ".venv",
   "pythonVersion": "3.12",

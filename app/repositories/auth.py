@@ -10,7 +10,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.auth import AccountTokenMapping, PinCredential, RefreshToken, User
+from app.models.auth import AccountTokenMapping, MfaConfig, PinCredential, RefreshToken, User
 
 
 async def get_user_by_email(db: AsyncSession, email: str) -> User | None:
@@ -94,6 +94,12 @@ async def create_account_token_mapping(
     db.add(mapping)
     await db.flush()
     return mapping
+
+
+async def get_mfa_config_by_user_id(db: AsyncSession, user_id: int) -> MfaConfig | None:
+    stmt = select(MfaConfig).where(MfaConfig.user_id == user_id)
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
 
 
 async def get_account_token_mapping(

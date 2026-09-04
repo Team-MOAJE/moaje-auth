@@ -178,21 +178,24 @@ Compose 환경에서는 MySQL이 호스트 `3307` 포트로 노출됩니다.
 
 `Authorization: Bearer {access_token}`
 
-### JWT Claim
+### JWT Claim (Principal Update)
 
-JWT Claim은 최소화한다.
+JWT Claim은 최소화한다. 서명 검증 후 Banking/Asset이 요청자 식별에 사용하는 principal 정보는 아래 payload 그대로다.
 
-필수 권장 Claim:
+| Claim | 타입 | 의미 | 비고 |
+| --- | --- | --- | --- |
+| sub | string | 사용자 ID (user_id) | 항상 포함 |
+| typ | string | 토큰 타입("access") | 항상 포함. Refresh Token은 JWT가 아니라 별도 해시로 관리 |
+| jti | string | 토큰 고유 ID | 항상 포함 |
+| iat | number | 발급 시각 (Unix seconds) | 항상 포함 |
+| exp | number | 만료 시각 (Unix seconds) | 항상 포함 |
+| iss | string | 발급자("moaje-auth") | 항상 포함 |
+| aud | string | 대상 서비스 | `JWT_AUDIENCE` 설정 시에만 포함 |
+| transaction_id | string | 요청 추적용 ID | 호출 시 전달한 경우에만 포함 |
 
-| Claim | 의미 |
-| --- | --- |
-| sub | 사용자 ID |
-| iat | 발급 시각 |
-| exp | 만료 시각 |
-| iss | 발급자 |
-| aud | 대상 서비스 |
+역할(role)/권한(permission) 관련 claim은 아직 없음 ... MFA/OAuth 등 확장 시 별도 검토 필요 !! 
 
-초기 구현에서는 sub, iat, exp만 사용할 수 있으나, 추후 iss, aud를 추가하는 것을 권장한다.
+gRPC `ValidateAccessToken`을 호출하면 위 payload를 직접 파싱할 필요 없이 `is_valid`, `user_id`, `expires_at`만 검증 결과로 받는다
 
 ---
 
@@ -207,7 +210,6 @@ Refresh Token은 원문을 저장하지 않는다.
 - 새 Refresh Token 발급 시 기존 Refresh Token은 즉시 revoke 처리
 
 저장 예시:
-
 refresh_token 원문 → SHA-256 → token_hash 저장
 
 ---
@@ -286,21 +288,27 @@ refresh_token 원문 → SHA-256 → token_hash 저장
 
 ---
 
-## 12. gRPC 정책
+## 12. gRPC 정책 (update)
 
-서비스 간 동기 요청/응답 통신은 추후 gRPC를 사용한다. 현재는 REST `/api/auth/token/validate`로 access token 검증을 제공한다.
+서비스 간 동기 요청/응답 통신은 gRPC를 사용한다. proto 정의는 `moaje-grpc-contracts` 레포(`proto/grpc/auth_service.proto`)에서 관리하며, 이 레포에는 `third_party/moaje-grpc-contracts` git submodule로 참조한다.
 
 Auth 서비스 주요 기능:
 
-- Access Token 검증
-- MFA 필요 여부 확인
-- Account Token 유효성 검증
+- Access Token 검증 (`ValidateAccessToken`)
+- MFA 필요 여부 확인 (`CheckMfaRequired`)
+- Account Token 유효성 검증 (`ValidateAccountToken`)
+
+gRPC 서버는 FastAPI 앱과 같은 프로세스에서 `GRPC_PORT`(기본 50051)로 기동된다. proto가 변경되면 `scripts/gen_proto.sh`로 stub을 재생성한다.
+
+### TLS (update)
+
+`GRPC_TLS_CERT`/`GRPC_TLS_KEY`(PEM) 설정 시 TLS로 기동, 미설정 시 경고 로그와 함께 insecure로 폴백(로컬 전용으로, 운영환경에서는 안됨) 운영 환경에서는 필수
 
 원칙:
 
-- gRPC 응답에는 검증 결과만 포함한다.
-- 민감정보를 반환하지 않는다.
-- transaction_id를 포함하여 로그 추적 가능하게 한다.
+- gRPC 응답에는 검증 결과만 포함
+- 민감정보를 반환하지 않음
+- transaction_id를 포함하여 로그 추적 가능하게 함
 - timestamp는 Unix milliseconds 기준 사용
 
 반환 금지 데이터:
@@ -392,6 +400,7 @@ Redis 사용 용도:
 - REST 기반 token validate API
 - AES-256-GCM 암복호화 유틸
 - Account Token 매핑 로직
+- gRPC AuthService (ValidateAccessToken, CheckMfaRequired, ValidateAccountToken)
 - Dockerfile 작성
 
 추후 확장:
