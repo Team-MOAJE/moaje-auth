@@ -21,12 +21,21 @@ class Settings(BaseSettings):
     jwt_issuer: str = Field(default="moaje-auth", alias="JWT_ISSUER")
     jwt_audience: str | None = Field(default=None, alias="JWT_AUDIENCE")
     access_token_expire_minutes: int = Field(default=30, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
-    refresh_token_expire_days: int = Field(default=14, alias="REFRESH_TOKEN_EXPIRE_DAYS")
+    refresh_token_expire_days: int = Field(default=7, alias="REFRESH_TOKEN_EXPIRE_DAYS")
+    sms_provider: str = Field(default="disabled", alias="SMS_PROVIDER")
+    sms_otp_expire_minutes: int = Field(default=5, alias="SMS_OTP_EXPIRE_MINUTES")
+    sms_otp_max_attempts: int = Field(default=5, alias="SMS_OTP_MAX_ATTEMPTS")
+    sms_request_cooldown_seconds: int = Field(default=60, alias="SMS_REQUEST_COOLDOWN_SECONDS")
+    sms_hourly_request_limit: int = Field(default=5, alias="SMS_HOURLY_REQUEST_LIMIT")
+    sms_dev_expose_code: bool = Field(default=False, alias="SMS_DEV_EXPOSE_CODE")
+    pin_max_attempts: int = Field(default=5, alias="PIN_MAX_ATTEMPTS")
+    pin_lock_minutes: int = Field(default=30, alias="PIN_LOCK_MINUTES")
 
     aes_master_key: str = Field(default="change-me", alias="AES_MASTER_KEY")
     key_version: int = Field(default=1, alias="KEY_VERSION")
 
     grpc_port: int = Field(default=50051, alias="GRPC_PORT")
+    work_service_token: str | None = Field(default=None, alias="WORK_SERVICE_TOKEN")
     grpc_tls_cert: str | None = Field(default=None, alias="GRPC_TLS_CERT")
     grpc_tls_key: str | None = Field(default=None, alias="GRPC_TLS_KEY")
 

@@ -6,6 +6,7 @@ from app.models.auth import (
     OAuthAccount,
     PinCredential,
     RefreshToken,
+    SmsVerification,
     User,
     WebAuthnCredential,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "OAuthAccount",
     "PinCredential",
     "RefreshToken",
+    "SmsVerification",
     "User",
     "WebAuthnCredential",
 ]

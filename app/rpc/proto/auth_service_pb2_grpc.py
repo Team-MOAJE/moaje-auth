@@ -34,6 +34,11 @@ class AuthServiceStub:
         Args:
             channel: A grpc.Channel.
         """
+        self.CompleteOnboarding = channel.unary_unary(
+                '/moaje.grpc.auth.AuthService/CompleteOnboarding',
+                request_serializer=auth__service__pb2.CompleteOnboardingRequest.SerializeToString,
+                response_deserializer=auth__service__pb2.CompleteOnboardingResponse.FromString,
+                _registered_method=True)
         self.ValidateAccessToken = channel.unary_unary(
                 '/moaje.grpc.auth.AuthService/ValidateAccessToken',
                 request_serializer=auth__service__pb2.ValidateAccessTokenRequest.SerializeToString,
@@ -53,6 +58,18 @@ class AuthServiceStub:
 
 class AuthServiceServicer:
     """Missing associated documentation comment in .proto file."""
+
+    def CompleteOnboarding(self, request, context):
+        """Work -> Auth. Call only after answers are durably saved.
+        Metadata: authorization: Bearer <WORK_SERVICE_TOKEN>; TLS required outside local dev.
+        Idempotent: repeated completion returns success. Client deadline: 3 seconds.
+        Retry UNAVAILABLE/DEADLINE_EXCEEDED with bounded exponential backoff.
+        Errors: UNAUTHENTICATED, INVALID_ARGUMENT, NOT_FOUND (missing/inactive user),
+        FAILED_PRECONDITION (service authentication not configured), UNAVAILABLE (DB failure).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
 
     def ValidateAccessToken(self, request, context):
         """JWT Access Token 검증 (Asset/Banking -> Auth)
@@ -78,6 +95,11 @@ class AuthServiceServicer:
 
 def add_AuthServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
+            'CompleteOnboarding': grpc.unary_unary_rpc_method_handler(
+                    servicer.CompleteOnboarding,
+                    request_deserializer=auth__service__pb2.CompleteOnboardingRequest.FromString,
+                    response_serializer=auth__service__pb2.CompleteOnboardingResponse.SerializeToString,
+            ),
             'ValidateAccessToken': grpc.unary_unary_rpc_method_handler(
                     servicer.ValidateAccessToken,
                     request_deserializer=auth__service__pb2.ValidateAccessTokenRequest.FromString,
@@ -103,6 +125,33 @@ def add_AuthServiceServicer_to_server(servicer, server):
  # This class is part of an EXPERIMENTAL API.
 class AuthService:
     """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def CompleteOnboarding(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/moaje.grpc.auth.AuthService/CompleteOnboarding',
+            auth__service__pb2.CompleteOnboardingRequest.SerializeToString,
+            auth__service__pb2.CompleteOnboardingResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
 
     @staticmethod
     def ValidateAccessToken(request,

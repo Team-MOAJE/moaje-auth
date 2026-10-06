@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.mysql import INTEGER, TINYINT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -15,12 +15,21 @@ class User(Base):
     __tablename__ = "users"
     __table_args__ = (
         UniqueConstraint("email", name="uq_users_email"),
+        UniqueConstraint("phone_number", name="uq_users_phone_number"),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
     )
 
     user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
-    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    phone_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    terms_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    privacy_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    terms_agreed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     is_active: Mapped[int] = mapped_column(TINYINT(1), nullable=False, server_default="1")
+    onboarding_completed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
@@ -107,6 +116,27 @@ class PinCredential(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
 
     user: Mapped["User"] = relationship("User", back_populates="pin_credential")
+
+
+class SmsVerification(Base):
+    __tablename__ = "sms_verifications"
+    __table_args__ = (
+        Index("ix_sms_verifications_phone_purpose", "phone_number", "purpose"),
+        Index("ix_sms_verifications_expires_at", "expires_at"),
+        UniqueConstraint("verification_token_hash", name="uq_sms_verifications_token_hash"),
+        {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
+    )
+
+    verification_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    phone_number: Mapped[str] = mapped_column(String(20), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(20), nullable=False)
+    code_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    verification_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    failed_attempts: Mapped[int] = mapped_column(INTEGER, nullable=False, server_default="0")
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
 
 
 class RefreshToken(Base):

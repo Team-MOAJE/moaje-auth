@@ -6,8 +6,11 @@ app/services/auth.py에 이미 있는 REST용 비즈니스 로직을 그대로 �
 from __future__ import annotations
 
 import time
+import secrets
 
 import grpc
+from sqlalchemy.exc import SQLAlchemyError
+from app.core.config import get_settings
 
 from app.db.session import AsyncSessionLocal
 from app.rpc.proto import auth_service_pb2, auth_service_pb2_grpc
@@ -19,6 +22,33 @@ def _now_ms() -> int:
 
 
 class AuthServiceServicer(auth_service_pb2_grpc.AuthServiceServicer):
+    async def CompleteOnboarding(self, request, context):
+        expected = get_settings().work_service_token
+        if not expected:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "Work authentication is not configured")
+        headers = [value for key, value in context.invocation_metadata() if key == "authorization"]
+        if len(headers) != 1 or not secrets.compare_digest(
+            headers[0].encode("utf-8"), f"Bearer {expected}".encode("utf-8")
+        ):
+            await context.abort(grpc.StatusCode.UNAUTHENTICATED, "Invalid service credentials")
+        try:
+            user_id = auth_service.parse_user_id(request.user_id)
+        except ValueError:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "Invalid user ID")
+        try:
+            async with AsyncSessionLocal() as db:
+                await auth_service.complete_onboarding(db, user_id=user_id)
+        except auth_service.UserNotFoundError:
+            await context.abort(grpc.StatusCode.NOT_FOUND, "User is unavailable")
+        except SQLAlchemyError:
+            await context.abort(grpc.StatusCode.UNAVAILABLE, "Database operation failed")
+        return auth_service_pb2.CompleteOnboardingResponse(
+            transaction_id=request.transaction_id,
+            user_id=str(user_id),
+            onboarding_completed=True,
+            timestamp=_now_ms(),
+        )
+
     async def ValidateAccessToken(
         self,
         request: auth_service_pb2.ValidateAccessTokenRequest,

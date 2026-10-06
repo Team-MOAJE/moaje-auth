@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# moaje-grpc-contracts(third_party/moaje-grpc-contracts submodule)의 auth_service.proto로부터
+# 공통 계약 레포(기본 ../grpcs/proto)의 auth_service.proto로부터
 # app/rpc/proto 아래 Python gRPC stub을 재생성한다.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONTRACTS_DIR="$ROOT_DIR/third_party/moaje-grpc-contracts/proto"
+CONTRACTS_DIR="${CONTRACTS_DIR:-$ROOT_DIR/../grpcs/proto}"
 OUT_DIR="$ROOT_DIR/app/rpc/proto"
 
 if [ ! -f "$CONTRACTS_DIR/grpc/auth_service.proto" ]; then
-  echo "moaje-grpc-contracts submodule이 초기화되지 않았습니다. 'git submodule update --init' 를 먼저 실행하세요." >&2
+  echo "CONTRACTS_DIR에 공통 계약 레포의 proto 디렉터리를 지정하세요: $CONTRACTS_DIR" >&2
   exit 1
 fi
 

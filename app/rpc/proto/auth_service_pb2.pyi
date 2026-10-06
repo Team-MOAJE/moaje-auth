@@ -71,3 +71,25 @@ class ValidateAccountTokenResponse(_message.Message):
     is_active: bool
     timestamp: int
     def __init__(self, transaction_id: _Optional[str] = ..., is_valid: _Optional[bool] = ..., user_id: _Optional[str] = ..., is_active: _Optional[bool] = ..., timestamp: _Optional[int] = ...) -> None: ...
+
+class CompleteOnboardingRequest(_message.Message):
+    __slots__ = ("transaction_id", "user_id", "timestamp")
+    TRANSACTION_ID_FIELD_NUMBER: _ClassVar[int]
+    USER_ID_FIELD_NUMBER: _ClassVar[int]
+    TIMESTAMP_FIELD_NUMBER: _ClassVar[int]
+    transaction_id: str
+    user_id: str
+    timestamp: int
+    def __init__(self, transaction_id: _Optional[str] = ..., user_id: _Optional[str] = ..., timestamp: _Optional[int] = ...) -> None: ...
+
+class CompleteOnboardingResponse(_message.Message):
+    __slots__ = ("transaction_id", "user_id", "onboarding_completed", "timestamp")
+    TRANSACTION_ID_FIELD_NUMBER: _ClassVar[int]
+    USER_ID_FIELD_NUMBER: _ClassVar[int]
+    ONBOARDING_COMPLETED_FIELD_NUMBER: _ClassVar[int]
+    TIMESTAMP_FIELD_NUMBER: _ClassVar[int]
+    transaction_id: str
+    user_id: str
+    onboarding_completed: bool
+    timestamp: int
+    def __init__(self, transaction_id: _Optional[str] = ..., user_id: _Optional[str] = ..., onboarding_completed: _Optional[bool] = ..., timestamp: _Optional[int] = ...) -> None: ...

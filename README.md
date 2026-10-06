@@ -17,7 +17,7 @@
 - MFA(TOTP) 예정
 - WebAuthn/FIDO2 인증 정보 관리 예정
 - Account Token 관리
-- 내부 서비스용 gRPC 인터페이스 제공 예정
+- 내부 서비스용 gRPC 인터페이스 제공
 - Auth 관련 Kafka 이벤트 발행 예정
 
 ---
@@ -38,7 +38,7 @@
 | OAuth | Kakao, Google / OAuth 2.0 예정 |
 | Encryption | AES-256-GCM |
 | Key Management | AWS Secrets Manager |
-| Internal API | REST token validate 구현 / gRPC 예정 |
+| Internal API | REST / gRPC |
 | Event Stream | Kafka 예정 |
 | Cache / Session | Redis 예정 |
 | Transport Security | TLS 1.3, gRPC-TLS |
@@ -70,6 +70,7 @@ Moaje 프로젝트의 통신 방식은 다음과 같이 구분합니다.
 - `ValidateAccessToken`
 - `CheckMfaRequired`
 - `ValidateAccountToken`
+- `CompleteOnboarding`
 
 #### Kafka Events
 
@@ -115,7 +116,17 @@ ALGORITHM=HS256
 JWT_ISSUER=moaje-auth
 # JWT_AUDIENCE=moaje-services
 ACCESS_TOKEN_EXPIRE_MINUTES=30
-REFRESH_TOKEN_EXPIRE_DAYS=14
+REFRESH_TOKEN_EXPIRE_DAYS=7
+
+# 실제 SMS 공급자 adapter 연결 전에는 disabled 유지
+SMS_PROVIDER=disabled
+SMS_OTP_EXPIRE_MINUTES=5
+SMS_OTP_MAX_ATTEMPTS=5
+SMS_REQUEST_COOLDOWN_SECONDS=60
+SMS_HOURLY_REQUEST_LIMIT=5
+SMS_DEV_EXPOSE_CODE=false
+PIN_MAX_ATTEMPTS=5
+PIN_LOCK_MINUTES=30
 
 AES_MASTER_KEY=
 KEY_VERSION=1
@@ -138,8 +149,13 @@ python -c "import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).dec
 
 | Method | Path | 설명 |
 | --- | --- | --- |
-| POST | `/api/auth/register` | PIN 기반 회원가입 |
-| POST | `/api/auth/login` | PIN 로그인 및 access/refresh token 발급 |
+| GET | `/api/auth/me` | Bearer JWT로 본인 ID·온보딩 완료 상태 조회 |
+| POST | `/api/auth/sms/request` | 가입·로그인·PIN 재설정용 SMS 인증 요청 |
+| POST | `/api/auth/sms/verify` | SMS 인증번호 검증 및 일회성 인증 토큰 발급 |
+| POST | `/api/auth/register` | 인증된 전화번호·이름·6자리 PIN으로 회원가입 및 세션 발급 |
+| POST | `/api/auth/login` | SMS 인증 토큰·PIN으로 로그인 및 세션 발급 |
+| POST | `/api/auth/session/unlock` | 유효한 세션과 PIN으로 앱 잠금 해제 및 토큰 교체 |
+| POST | `/api/auth/pin/reset` | SMS 재인증 후 PIN 변경 및 기존 세션 전체 폐기 |
 | POST | `/api/auth/refresh` | refresh token rotation |
 | POST | `/api/auth/logout` | refresh token 폐기 |
 | POST | `/api/auth/token/validate` | body 기반 access token 검증 |
@@ -169,6 +185,18 @@ curl http://localhost:8000/health
 ```
 
 Compose 환경에서는 MySQL이 호스트 `3307` 포트로 노출됩니다.
+
+### 전화번호 인증 흐름
+
+전화번호는 `01012345678` 또는 `+821012345678` 형식으로 받고 DB에는 E.164 형식으로 정규화한다. 전화번호는 로그인 식별자이며 JWT `sub`에는 변경되지 않는 내부 `user_id` 문자열을 사용한다.
+
+1. `/sms/request`에 전화번호와 `REGISTER`, `LOGIN`, `RESET_PIN` 중 목적을 전송한다.
+2. 전달받은 `verification_id`와 6자리 인증번호를 `/sms/verify`로 검증한다.
+3. 반환된 일회성 `verification_token`을 회원가입·로그인·PIN 재설정 요청에 사용한다.
+
+인증번호는 5분 후 만료되고 한 번만 사용할 수 있으며 입력 실패·재발송·시간당 발송 횟수를 서버에서 제한한다. 기본 `SMS_PROVIDER=disabled` 상태에서는 요청이 503으로 거절된다. 로컬 통합 테스트에서만 `APP_ENV=local`, `SMS_PROVIDER=dev`, `SMS_DEV_EXPOSE_CODE=true`를 설정하면 응답의 `dev_code`로 인증번호를 확인할 수 있다. 운영 환경에서는 실제 SMS 공급자 adapter를 구현하고 `dev_code` 노출을 금지해야 한다.
+
+간편 비밀번호는 숫자 6자리이며 bcrypt 해시만 저장한다. 연속 실패 횟수와 잠금 상태는 서버에서 관리한다. Refresh Token은 회전할 때마다 새로 발급되며 마지막 갱신 후 7일 동안 유효하다. PIN 재설정 시 해당 사용자의 모든 Refresh Token을 폐기한다. 모바일 앱은 Refresh Token을 Keychain 또는 Keystore에 저장해야 한다.
 
 ## 7. 토큰 정책
 
@@ -288,37 +316,30 @@ refresh_token 원문 → SHA-256 → token_hash 저장
 
 ---
 
-## 12. gRPC 정책 (update)
+## 12. gRPC 및 온보딩 연동
 
-서비스 간 동기 요청/응답 통신은 gRPC를 사용한다. proto 정의는 `moaje-grpc-contracts` 레포(`proto/grpc/auth_service.proto`)에서 관리하며, 이 레포에는 `third_party/moaje-grpc-contracts` git submodule로 참조한다.
+gRPC 서버는 기본 `50051` 포트에서 실행한다. 계약은 별도 `moaje-grpc-contracts` 레포에서 관리한다.
 
-Auth 서비스 주요 기능:
+### 제공 RPC
 
-- Access Token 검증 (`ValidateAccessToken`)
-- MFA 필요 여부 확인 (`CheckMfaRequired`)
-- Account Token 유효성 검증 (`ValidateAccountToken`)
+- `ValidateAccessToken`: Access Token 검증
+- `CheckMfaRequired`: MFA 활성 여부 조회
+- `ValidateAccountToken`: Account Token 검증
+- `CompleteOnboarding`: Work가 완료한 재무 온보딩 상태 반영
 
-gRPC 서버는 FastAPI 앱과 같은 프로세스에서 `GRPC_PORT`(기본 50051)로 기동된다. proto가 변경되면 `scripts/gen_proto.sh`로 stub을 재생성한다.
+### 온보딩 상태
 
-### TLS (update)
+- 신규 회원은 `onboarding_completed=false`로 생성한다.
+- 앱은 `GET /api/auth/me`로 현재 상태를 조회한다.
+- Work는 온보딩 답변을 저장한 뒤 `CompleteOnboarding`을 호출한다.
+- 완료 요청을 여러 번 호출해도 성공하도록 처리한다.
+- 사용자 ID는 JWT의 `sub`를 사용하며 온보딩 상태는 JWT에 넣지 않는다.
 
-`GRPC_TLS_CERT`/`GRPC_TLS_KEY`(PEM) 설정 시 TLS로 기동, 미설정 시 경고 로그와 함께 insecure로 폴백(로컬 전용으로, 운영환경에서는 안됨) 운영 환경에서는 필수
+### 서비스 인증 및 TLS
 
-원칙:
-
-- gRPC 응답에는 검증 결과만 포함
-- 민감정보를 반환하지 않음
-- transaction_id를 포함하여 로그 추적 가능하게 함
-- timestamp는 Unix milliseconds 기준 사용
-
-반환 금지 데이터:
-
-- refresh_token 원문
-- password hash
-- TOTP secret
-- encrypted account number
-- 계좌번호 평문
-- WebAuthn secret/private 정보
+- Work 호출은 `WORK_SERVICE_TOKEN`으로 인증한다.
+- `GRPC_TLS_CERT`와 `GRPC_TLS_KEY`가 있으면 TLS로 실행한다.
+- 인증서가 없으면 로컬 개발용 insecure 모드로 실행한다.
 
 ---
 
@@ -393,14 +414,16 @@ Redis 사용 용도:
 
 - FastAPI health check
 - Alembic 기반 Auth DB 스키마
-- PIN 기반 회원가입/로그인
+- 전화번호 SMS 인증 및 6자리 PIN 기반 회원가입/로그인
+- 서버 기반 PIN 실패 잠금, PIN 재설정 및 세션 전체 폐기
 - JWT Access Token 발급 및 검증
 - Refresh Token 해시 저장
 - Refresh Token Rotation
 - REST 기반 token validate API
 - AES-256-GCM 암복호화 유틸
 - Account Token 매핑 로직
-- gRPC AuthService (ValidateAccessToken, CheckMfaRequired, ValidateAccountToken)
+- 온보딩 완료 상태 조회 및 Work 연동
+- gRPC AuthService (ValidateAccessToken, CheckMfaRequired, ValidateAccountToken, CompleteOnboarding)
 - Dockerfile 작성
 
 추후 확장:
