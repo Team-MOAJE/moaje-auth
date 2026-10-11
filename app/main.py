@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.auth import router as auth_router
+from app.api.jwks import router as jwks_router
 from app.core.responses import (
     REQUIRED_ACTION_NONE,
     REQUIRED_ACTION_RETRY_LATER,
@@ -36,6 +37,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="moaje-auth", lifespan=lifespan)
 app.include_router(auth_router)
+app.include_router(jwks_router)
 
 
 @app.middleware("http")

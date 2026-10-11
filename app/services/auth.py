@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import re
 import secrets
 import time
@@ -26,7 +24,6 @@ from app.core.security import (
 )
 from app.core.security import validate_access_token as validate_jwt_access_token
 from app.repositories import auth as auth_repository
-from app.services import sms as sms_service
 
 
 ## ---- 에러 처리 관련 ... 추후 확장 필요. 지금은 임시
@@ -46,7 +43,11 @@ class UserNotFoundError(AuthError):
 
 
 class InvalidCredentialsError(AuthError):
-    default_message = "이메일 또는 PIN이 올바르지 않습니다."
+    default_message = "전화번호 또는 PIN이 올바르지 않습니다."
+
+
+class InvalidPhoneNumberError(AuthError):
+    default_message = "휴대전화 번호 형식이 올바르지 않습니다."
 
 
 class InvalidRefreshTokenError(AuthError):
@@ -55,14 +56,6 @@ class InvalidRefreshTokenError(AuthError):
 
 class AccountTokenError(AuthError):
     default_message = "계좌 토큰 처리 중 오류가 발생했습니다."
-
-
-class SmsVerificationError(AuthError):
-    default_message = "SMS 인증에 실패했습니다."
-
-
-class SmsDeliveryUnavailableError(AuthError):
-    default_message = "SMS 발송 서비스를 사용할 수 없습니다."
 
 
 class PinLockedError(AuthError):
@@ -97,19 +90,6 @@ class ValidatedAccountToken:
 
 
 @dataclass(frozen=True)
-class RequestedSmsVerification:
-    verification_id: str
-    expires_in: int
-    dev_code: str | None = None
-
-
-@dataclass(frozen=True)
-class VerifiedSms:
-    verification_token: str
-    expires_in: int
-
-
-@dataclass(frozen=True)
 class RegisteredUser:
     user_id: int
     phone_number: str
@@ -129,130 +109,7 @@ def normalize_phone_number(value: str) -> str:
         return "+82" + compact[1:]
     if re.fullmatch(r"\+8210\d{8}", compact):
         return compact
-    raise ValueError("휴대전화 번호 형식이 올바르지 않습니다.")
-
-
-def _otp_digest(*, verification_id: str, code: str, settings: Settings) -> str:
-    key = settings.secret_key.encode("utf-8")
-    message = f"{verification_id}:{code}".encode("utf-8")
-    return hmac.new(key, message, hashlib.sha256).hexdigest()
-
-
-async def request_sms_verification(
-    db: AsyncSession,
-    *,
-    phone_number: str,
-    purpose: str,
-    settings: Settings | None = None,
-) -> RequestedSmsVerification:
-    settings = settings or get_settings()
-    normalized = normalize_phone_number(phone_number)
-    user = await auth_repository.get_user_by_phone(db, normalized)
-    if purpose == "REGISTER" and user:
-        raise DuplicateUserError("이미 가입된 번호입니다. 로그인해 주세요.")
-    if purpose in {"LOGIN", "RESET_PIN"} and (not user or not user.is_active):
-        raise UserNotFoundError("가입된 사용자를 찾을 수 없습니다.")
-
-    now = utc_now().replace(tzinfo=None)
-    latest = await auth_repository.get_latest_sms_verification(
-        db, phone_number=normalized, purpose=purpose
-    )
-    if latest and (now - latest.created_at).total_seconds() < settings.sms_request_cooldown_seconds:
-        raise SmsVerificationError("인증번호 재발송은 잠시 후 시도해 주세요.")
-    hourly_count = await auth_repository.count_sms_verifications_since(
-        db, phone_number=normalized, since=now - timedelta(hours=1)
-    )
-    if hourly_count >= settings.sms_hourly_request_limit:
-        raise SmsVerificationError("인증번호 발송 횟수를 초과했습니다.")
-
-    verification_id = secrets.token_urlsafe(32)
-    code = f"{secrets.randbelow(1_000_000):06d}"
-    expires_at = utc_now() + timedelta(minutes=settings.sms_otp_expire_minutes)
-    await auth_repository.create_sms_verification(
-        db,
-        verification_id=verification_id,
-        phone_number=normalized,
-        purpose=purpose,
-        code_digest=_otp_digest(
-            verification_id=verification_id, code=code, settings=settings
-        ),
-        expires_at=expires_at.replace(tzinfo=None),
-    )
-    try:
-        await sms_service.send_verification_code(
-            phone_number=normalized, code=code, settings=settings
-        )
-        await db.commit()
-    except sms_service.SmsDeliveryError as exc:
-        await db.rollback()
-        raise SmsDeliveryUnavailableError() from exc
-
-    expose = (
-        settings.sms_provider == "dev"
-        and settings.sms_dev_expose_code
-        and settings.app_env in {"local", "test"}
-    )
-    return RequestedSmsVerification(
-        verification_id=verification_id,
-        expires_in=settings.sms_otp_expire_minutes * 60,
-        dev_code=code if expose else None,
-    )
-
-
-async def verify_sms_code(
-    db: AsyncSession,
-    *,
-    verification_id: str,
-    code: str,
-    settings: Settings | None = None,
-) -> VerifiedSms:
-    settings = settings or get_settings()
-    verification = await auth_repository.get_sms_verification_for_update(
-        db, verification_id
-    )
-    now = utc_now().replace(tzinfo=None)
-    if (
-        not verification
-        or verification.consumed_at is not None
-        or verification.verified_at is not None
-        or verification.expires_at <= now
-        or verification.failed_attempts >= settings.sms_otp_max_attempts
-    ):
-        raise SmsVerificationError("만료되었거나 사용할 수 없는 인증 요청입니다.")
-
-    expected = _otp_digest(
-        verification_id=verification_id, code=code, settings=settings
-    )
-    if not hmac.compare_digest(verification.code_digest, expected):
-        verification.failed_attempts += 1
-        await db.commit()
-        raise SmsVerificationError("인증번호가 올바르지 않습니다.")
-
-    token = secrets.token_urlsafe(48)
-    verification.verification_token_hash = hash_token(token)
-    verification.verified_at = now
-    await db.commit()
-    remaining = max(1, int((verification.expires_at - now).total_seconds()))
-    return VerifiedSms(verification_token=token, expires_in=remaining)
-
-
-async def _consume_sms_verification(
-    db: AsyncSession, *, verification_token: str, purpose: str
-) -> str:
-    verification = await auth_repository.get_sms_verification_by_token_for_update(
-        db, hash_token(verification_token)
-    )
-    now = utc_now().replace(tzinfo=None)
-    if (
-        not verification
-        or verification.purpose != purpose
-        or verification.verified_at is None
-        or verification.consumed_at is not None
-        or verification.expires_at <= now
-    ):
-        raise SmsVerificationError("유효한 SMS 인증이 필요합니다.")
-    verification.consumed_at = now
-    return verification.phone_number
+    raise InvalidPhoneNumberError()
 
 
 def parse_user_id(value: str) -> int:
@@ -345,7 +202,7 @@ async def login_with_pin(
 async def register_phone_user(
     db: AsyncSession,
     *,
-    verification_token: str,
+    phone_number: str,
     name: str,
     pin: str,
     terms_version: str,
@@ -353,17 +210,14 @@ async def register_phone_user(
     email: str | None = None,
     device_info: str | None = None,
 ) -> RegisteredUser:
-    phone_number = await _consume_sms_verification(
-        db, verification_token=verification_token, purpose="REGISTER"
-    )
-    if await auth_repository.get_user_by_phone(db, phone_number):
-        await db.rollback()
+    normalized_phone = normalize_phone_number(phone_number)
+    if await auth_repository.get_user_by_phone(db, normalized_phone):
         raise DuplicateUserError("이미 가입된 번호입니다. 로그인해 주세요.")
     try:
         user = await auth_repository.create_phone_user(
             db,
             user_id=generate_user_id(),
-            phone_number=phone_number,
+            phone_number=normalized_phone,
             name=name.strip(),
             email=email,
             pin_hash=hash_pin(pin),
@@ -380,7 +234,7 @@ async def register_phone_user(
         raise DuplicateUserError("이미 가입된 번호입니다. 로그인해 주세요.") from exc
     return RegisteredUser(
         user_id=user.user_id,
-        phone_number=phone_number,
+        phone_number=normalized_phone,
         name=user.name or "",
         onboarding_completed=False,
         tokens=tokens,
@@ -403,7 +257,7 @@ async def _verify_user_pin(
     if credential is None:
         raise InvalidCredentialsError("간편 비밀번호가 설정되지 않았습니다.")
     if _pin_is_locked(credential):
-        raise PinLockedError("SMS 재인증 후 간편 비밀번호를 재설정해 주세요.")
+        raise PinLockedError("잠금 시간이 지난 후 다시 시도해 주세요.")
     if not verify_pin(pin, credential.pin_hash):
         credential.failed_attempts += 1
         if credential.failed_attempts >= settings.pin_max_attempts:
@@ -412,7 +266,7 @@ async def _verify_user_pin(
             ).replace(tzinfo=None)
         await db.commit()
         if _pin_is_locked(credential):
-            raise PinLockedError("SMS 재인증 후 간편 비밀번호를 재설정해 주세요.")
+            raise PinLockedError("잠금 시간이 지난 후 다시 시도해 주세요.")
         raise InvalidCredentialsError("간편 비밀번호가 올바르지 않습니다.")
     credential.failed_attempts = 0
     credential.locked_until = None
@@ -421,16 +275,14 @@ async def _verify_user_pin(
 async def login_phone_user(
     db: AsyncSession,
     *,
-    verification_token: str,
+    phone_number: str,
     pin: str,
     device_info: str | None = None,
     settings: Settings | None = None,
 ) -> tuple[IssuedTokens, bool]:
     settings = settings or get_settings()
-    phone_number = await _consume_sms_verification(
-        db, verification_token=verification_token, purpose="LOGIN"
-    )
-    user = await auth_repository.get_user_by_phone(db, phone_number)
+    normalized_phone = normalize_phone_number(phone_number)
+    user = await auth_repository.get_user_by_phone(db, normalized_phone)
     if not user or not user.is_active:
         await db.rollback()
         raise InvalidCredentialsError()
@@ -471,19 +323,19 @@ async def unlock_session(
     return tokens, bool(user.onboarding_completed)
 
 
-async def reset_pin(
+async def change_pin(
     db: AsyncSession,
     *,
-    verification_token: str,
+    user_id: int,
+    current_pin: str,
     new_pin: str,
+    settings: Settings | None = None,
 ) -> None:
-    phone_number = await _consume_sms_verification(
-        db, verification_token=verification_token, purpose="RESET_PIN"
-    )
-    user = await auth_repository.get_user_by_phone(db, phone_number)
+    settings = settings or get_settings()
+    user = await auth_repository.get_user_by_id(db, user_id)
     if not user or not user.is_active or not user.pin_credential:
-        await db.rollback()
         raise UserNotFoundError()
+    await _verify_user_pin(db, user=user, pin=current_pin, settings=settings)
     user.pin_credential.pin_hash = hash_pin(new_pin)
     user.pin_credential.failed_attempts = 0
     user.pin_credential.locked_until = None

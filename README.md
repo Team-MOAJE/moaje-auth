@@ -118,13 +118,6 @@ JWT_ISSUER=moaje-auth
 ACCESS_TOKEN_EXPIRE_MINUTES=30
 REFRESH_TOKEN_EXPIRE_DAYS=7
 
-# 실제 SMS 공급자 adapter 연결 전에는 disabled 유지
-SMS_PROVIDER=disabled
-SMS_OTP_EXPIRE_MINUTES=5
-SMS_OTP_MAX_ATTEMPTS=5
-SMS_REQUEST_COOLDOWN_SECONDS=60
-SMS_HOURLY_REQUEST_LIMIT=5
-SMS_DEV_EXPOSE_CODE=false
 PIN_MAX_ATTEMPTS=5
 PIN_LOCK_MINUTES=30
 
@@ -150,12 +143,11 @@ python -c "import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).dec
 | Method | Path | 설명 |
 | --- | --- | --- |
 | GET | `/api/auth/me` | Bearer JWT로 본인 ID·온보딩 완료 상태 조회 |
-| POST | `/api/auth/sms/request` | 가입·로그인·PIN 재설정용 SMS 인증 요청 |
-| POST | `/api/auth/sms/verify` | SMS 인증번호 검증 및 일회성 인증 토큰 발급 |
-| POST | `/api/auth/register` | 인증된 전화번호·이름·6자리 PIN으로 회원가입 및 세션 발급 |
-| POST | `/api/auth/login` | SMS 인증 토큰·PIN으로 로그인 및 세션 발급 |
+| GET | `/.well-known/jwks.json` | Gateway JWT 검증용 RSA 공개키 조회 |
+| POST | `/api/auth/register` | 전화번호·이름·선택 이메일·6자리 PIN으로 회원가입 및 세션 발급 |
+| POST | `/api/auth/login` | 전화번호·PIN으로 로그인 및 세션 발급 |
 | POST | `/api/auth/session/unlock` | 유효한 세션과 PIN으로 앱 잠금 해제 및 토큰 교체 |
-| POST | `/api/auth/pin/reset` | SMS 재인증 후 PIN 변경 및 기존 세션 전체 폐기 |
+| POST | `/api/auth/pin/change` | Bearer JWT와 현재 PIN 확인 후 PIN 변경 및 기존 세션 전체 폐기 |
 | POST | `/api/auth/refresh` | refresh token rotation |
 | POST | `/api/auth/logout` | refresh token 폐기 |
 | POST | `/api/auth/token/validate` | body 기반 access token 검증 |
@@ -186,17 +178,13 @@ curl http://localhost:8000/health
 
 Compose 환경에서는 MySQL이 호스트 `3307` 포트로 노출됩니다.
 
-### 전화번호 인증 흐름
+### 전화번호 기반 계정 흐름
 
-전화번호는 `01012345678` 또는 `+821012345678` 형식으로 받고 DB에는 E.164 형식으로 정규화한다. 전화번호는 로그인 식별자이며 JWT `sub`에는 변경되지 않는 내부 `user_id` 문자열을 사용한다.
+전화번호는 E.164 형식으로 정규화하고 형식·중복만 검사함. 소유 인증값으로 취급하지 않으며 로그인 식별자로 사용함. JWT `sub`에는 내부 `user_id`를 사용함.
 
-1. `/sms/request`에 전화번호와 `REGISTER`, `LOGIN`, `RESET_PIN` 중 목적을 전송한다.
-2. 전달받은 `verification_id`와 6자리 인증번호를 `/sms/verify`로 검증한다.
-3. 반환된 일회성 `verification_token`을 회원가입·로그인·PIN 재설정 요청에 사용한다.
+회원가입은 전화번호·이름·선택 이메일·6자리 PIN·약관 동의를 받음. 성별과 별도 아이디는 받지 않음.
 
-인증번호는 5분 후 만료되고 한 번만 사용할 수 있으며 입력 실패·재발송·시간당 발송 횟수를 서버에서 제한한다. 기본 `SMS_PROVIDER=disabled` 상태에서는 요청이 503으로 거절된다. 로컬 통합 테스트에서만 `APP_ENV=local`, `SMS_PROVIDER=dev`, `SMS_DEV_EXPOSE_CODE=true`를 설정하면 응답의 `dev_code`로 인증번호를 확인할 수 있다. 운영 환경에서는 실제 SMS 공급자 adapter를 구현하고 `dev_code` 노출을 금지해야 한다.
-
-간편 비밀번호는 숫자 6자리이며 bcrypt 해시만 저장한다. 연속 실패 횟수와 잠금 상태는 서버에서 관리한다. Refresh Token은 회전할 때마다 새로 발급되며 마지막 갱신 후 7일 동안 유효하다. PIN 재설정 시 해당 사용자의 모든 Refresh Token을 폐기한다. 모바일 앱은 Refresh Token을 Keychain 또는 Keystore에 저장해야 한다.
+PIN은 숫자 6자리이며 bcrypt 해시만 저장함. 실패 잠금과 PIN 변경은 서버에서 처리하고 변경 시 모든 Refresh Token을 폐기함. SMS를 사용하지 않아 PIN 분실 재설정은 제공하지 않음.
 
 ## 7. 토큰 정책
 
@@ -224,6 +212,8 @@ JWT Claim은 최소화한다. 서명 검증 후 Banking/Asset이 요청자 식�
 역할(role)/권한(permission) 관련 claim은 아직 없음 ... MFA/OAuth 등 확장 시 별도 검토 필요 !! 
 
 gRPC `ValidateAccessToken`을 호출하면 위 payload를 직접 파싱할 필요 없이 `is_valid`, `user_id`, `expires_at`만 검증 결과로 받는다
+
+RS256 JWT에 `kid`를 포함하고 Gateway는 JWKS 공개키로 검증함. 개인키는 Auth에만 보관함. 키는 PEM 원문 또는 마운트된 파일 경로로 설정함.
 
 ---
 
@@ -414,8 +404,8 @@ Redis 사용 용도:
 
 - FastAPI health check
 - Alembic 기반 Auth DB 스키마
-- 전화번호 SMS 인증 및 6자리 PIN 기반 회원가입/로그인
-- 서버 기반 PIN 실패 잠금, PIN 재설정 및 세션 전체 폐기
+- 전화번호 형식·중복 검사 및 6자리 PIN 기반 회원가입/로그인
+- 서버 기반 PIN 실패 잠금, 로그인 상태 PIN 변경 및 세션 전체 폐기
 - JWT Access Token 발급 및 검증
 - Refresh Token 해시 저장
 - Refresh Token Rotation
@@ -423,6 +413,7 @@ Redis 사용 용도:
 - AES-256-GCM 암복호화 유틸
 - Account Token 매핑 로직
 - 온보딩 완료 상태 조회 및 Work 연동
+- RS256 JWT, `kid`, JWKS 공개키 제공
 - gRPC AuthService (ValidateAccessToken, CheckMfaRequired, ValidateAccountToken, CompleteOnboarding)
 - Dockerfile 작성
 
@@ -433,5 +424,4 @@ Redis 사용 용도:
 - WebAuthn/FIDO2
 - Kafka 이벤트 발행
 - Redis blacklist
-- RS256 전환
 - AWS Secrets Manager 연동

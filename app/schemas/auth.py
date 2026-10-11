@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class RegisterRequest(BaseModel):
-    verification_token: str = Field(..., min_length=32)
+    phone_number: str = Field(..., min_length=10, max_length=20)
     name: str = Field(..., min_length=1, max_length=100)
     pin: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
     pin_confirm: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
@@ -24,27 +24,6 @@ class RegisterRequest(BaseModel):
         if self.pin != self.pin_confirm:
             raise ValueError("간편 비밀번호가 일치하지 않습니다.")
         return self
-
-
-class SmsRequest(BaseModel):
-    phone_number: str = Field(..., min_length=10, max_length=20)
-    purpose: Literal["REGISTER", "LOGIN", "RESET_PIN"]
-
-
-class SmsRequestResponse(BaseModel):
-    verification_id: str
-    expires_in: int
-    dev_code: str | None = None
-
-
-class SmsVerifyRequest(BaseModel):
-    verification_id: str = Field(..., min_length=32, max_length=64)
-    code: str = Field(..., pattern=r"^\d{6}$")
-
-
-class SmsVerifyResponse(BaseModel):
-    verification_token: str
-    expires_in: int
 
 
 class CurrentUserResponse(BaseModel):
@@ -64,7 +43,7 @@ class RegisterResponse(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    verification_token: str = Field(..., min_length=32)
+    phone_number: str = Field(..., min_length=10, max_length=20)
     pin: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
     device_info: str | None = Field(default=None, max_length=500)
 
@@ -74,13 +53,13 @@ class SessionUnlockRequest(BaseModel):
     pin: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
 
 
-class PinResetRequest(BaseModel):
-    verification_token: str = Field(..., min_length=32)
+class PinChangeRequest(BaseModel):
+    current_pin: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
     new_pin: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
     new_pin_confirm: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
 
     @model_validator(mode="after")
-    def pins_match(self) -> "PinResetRequest":
+    def pins_match(self) -> "PinChangeRequest":
         if self.new_pin != self.new_pin_confirm:
             raise ValueError("간편 비밀번호가 일치하지 않습니다.")
         return self
