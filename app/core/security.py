@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 import bcrypt
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from jose import JWTError, jwt
 
 from app.core.config import Settings, get_settings
@@ -18,6 +22,7 @@ __all__ = [
     "TokenValidationError",
     "create_access_token",
     "decode_token",
+    "get_jwks",
     "generate_refresh_token",
     "hash_pin",
     "hash_token",
@@ -72,9 +77,11 @@ def _get_signing_key(settings: Settings) -> str:
     if _is_symmetric_algorithm(algorithm):
         return settings.secret_key
     if _is_asymmetric_algorithm(algorithm):
-        if not settings.jwt_private_key:
-            raise TokenConfigurationError("JWT_PRIVATE_KEY is required for asymmetric JWT signing")
-        return settings.jwt_private_key
+        return _read_key(
+            inline_value=settings.jwt_private_key,
+            file_path=settings.jwt_private_key_file,
+            setting_name="JWT_PRIVATE_KEY",
+        )
     raise TokenConfigurationError(f"Unsupported JWT algorithm: {settings.algorithm}")
 
 
@@ -83,10 +90,61 @@ def _get_verification_key(settings: Settings) -> str:
     if _is_symmetric_algorithm(algorithm):
         return settings.secret_key
     if _is_asymmetric_algorithm(algorithm):
-        if not settings.jwt_public_key:
-            raise TokenConfigurationError("JWT_PUBLIC_KEY is required for asymmetric JWT verification")
-        return settings.jwt_public_key
+        return _read_key(
+            inline_value=settings.jwt_public_key,
+            file_path=settings.jwt_public_key_file,
+            setting_name="JWT_PUBLIC_KEY",
+        )
     raise TokenConfigurationError(f"Unsupported JWT algorithm: {settings.algorithm}")
+
+
+def _read_key(*, inline_value: str | None, file_path: str | None, setting_name: str) -> str:
+    if inline_value:
+        return inline_value
+    if not file_path:
+        raise TokenConfigurationError(f"{setting_name} or {setting_name}_FILE is required")
+    try:
+        value = Path(file_path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise TokenConfigurationError(f"Unable to read {setting_name}_FILE") from exc
+    if not value.strip():
+        raise TokenConfigurationError(f"{setting_name}_FILE is empty")
+    return value
+
+
+def _base64url_uint(value: int) -> str:
+    length = max(1, (value.bit_length() + 7) // 8)
+    return base64.urlsafe_b64encode(value.to_bytes(length, "big")).rstrip(b"=").decode("ascii")
+
+
+def get_jwks(*, settings: Settings | None = None) -> dict[str, list[dict[str, str]]]:
+    """Gateway가 JWT 서명을 검증할 수 있도록 현재 RSA 공개키를 JWK로 반환한다."""
+    settings = settings or get_settings()
+    algorithm = _normalized_algorithm(settings)
+    if not algorithm.startswith(("RS", "PS")):
+        raise TokenConfigurationError("JWKS requires an RSA JWT algorithm")
+    public_key_pem = _get_verification_key(settings)
+
+    try:
+        public_key = serialization.load_pem_public_key(public_key_pem.encode("utf-8"))
+    except (TypeError, ValueError) as exc:
+        raise TokenConfigurationError("JWT_PUBLIC_KEY must be a valid PEM public key") from exc
+    if not isinstance(public_key, rsa.RSAPublicKey):
+        raise TokenConfigurationError("JWT_PUBLIC_KEY must be an RSA public key")
+
+    numbers = public_key.public_numbers()
+    return {
+        "keys": [
+            {
+                "kty": "RSA",
+                "use": "sig",
+                "alg": algorithm,
+                "kid": settings.jwt_key_id,
+                "n": _base64url_uint(numbers.n),
+                "e": _base64url_uint(numbers.e),
+            }
+        ]
+    }
 
 
 def create_access_token(
@@ -111,7 +169,9 @@ def create_access_token(
     if transaction_id:
         payload["transaction_id"] = transaction_id
 
-    token = jwt.encode(payload, _get_signing_key(settings), algorithm=_normalized_algorithm(settings))
+    algorithm = _normalized_algorithm(settings)
+    headers = {"kid": settings.jwt_key_id, "typ": "JWT"} if _is_asymmetric_algorithm(algorithm) else None
+    token = jwt.encode(payload, _get_signing_key(settings), algorithm=algorithm, headers=headers)
     expires_in = int((expires_at - issued_at).total_seconds())
     return token, expires_in
 

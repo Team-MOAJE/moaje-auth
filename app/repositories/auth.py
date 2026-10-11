@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import cast
 
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -15,7 +15,6 @@ from app.models.auth import (
     MfaConfig,
     PinCredential,
     RefreshToken,
-    SmsVerification,
     User,
 )
 
@@ -85,78 +84,6 @@ async def create_phone_user(
     return user
 
 
-async def create_sms_verification(
-    db: AsyncSession,
-    *,
-    verification_id: str,
-    phone_number: str,
-    purpose: str,
-    code_digest: str,
-    expires_at: datetime,
-) -> SmsVerification:
-    verification = SmsVerification(
-        verification_id=verification_id,
-        phone_number=phone_number,
-        purpose=purpose,
-        code_digest=code_digest,
-        expires_at=expires_at,
-    )
-    db.add(verification)
-    await db.flush()
-    return verification
-
-
-async def get_sms_verification_for_update(
-    db: AsyncSession, verification_id: str
-) -> SmsVerification | None:
-    stmt = (
-        select(SmsVerification)
-        .where(SmsVerification.verification_id == verification_id)
-        .with_for_update()
-    )
-    result = await db.execute(stmt)
-    return result.scalar_one_or_none()
-
-
-async def get_sms_verification_by_token_for_update(
-    db: AsyncSession, token_hash: str
-) -> SmsVerification | None:
-    stmt = (
-        select(SmsVerification)
-        .where(SmsVerification.verification_token_hash == token_hash)
-        .with_for_update()
-    )
-    result = await db.execute(stmt)
-    return result.scalar_one_or_none()
-
-
-async def get_latest_sms_verification(
-    db: AsyncSession, *, phone_number: str, purpose: str
-) -> SmsVerification | None:
-    stmt = (
-        select(SmsVerification)
-        .where(
-            SmsVerification.phone_number == phone_number,
-            SmsVerification.purpose == purpose,
-        )
-        .order_by(SmsVerification.created_at.desc())
-        .limit(1)
-    )
-    result = await db.execute(stmt)
-    return result.scalar_one_or_none()
-
-
-async def count_sms_verifications_since(
-    db: AsyncSession, *, phone_number: str, since: datetime
-) -> int:
-    stmt = select(func.count()).select_from(SmsVerification).where(
-        SmsVerification.phone_number == phone_number,
-        SmsVerification.created_at >= since,
-    )
-    result = await db.execute(stmt)
-    return int(result.scalar_one())
-
-
 async def create_refresh_token(
     db: AsyncSession,
     *,
@@ -190,6 +117,19 @@ async def revoke_refresh_token(db: AsyncSession, refresh_token: RefreshToken) ->
 
 async def revoke_user_refresh_tokens(db: AsyncSession, user_id: int) -> int:
     stmt = update(RefreshToken).where(RefreshToken.user_id == user_id, RefreshToken.is_revoked == 0).values(is_revoked=1)
+    result = cast(CursorResult, await db.execute(stmt))
+    return result.rowcount or 0
+
+
+async def deactivate_user_account_tokens(db: AsyncSession, user_id: int) -> int:
+    stmt = (
+        update(AccountTokenMapping)
+        .where(
+            AccountTokenMapping.user_id == user_id,
+            AccountTokenMapping.is_active == 1,
+        )
+        .values(is_active=0)
+    )
     result = cast(CursorResult, await db.execute(stmt))
     return result.rowcount or 0
 

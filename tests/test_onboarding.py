@@ -40,13 +40,29 @@ class OnboardingTests(unittest.IsolatedAsyncioTestCase):
     async def test_me_uses_signed_subject(self):
         token, _ = create_access_token("123", settings=SETTINGS)
         request = Request({"type": "http", "headers": [(b"x-user-id", b"999")]})
-        user = SimpleNamespace(user_id=123, is_active=1, onboarding_completed=False)
+        user = SimpleNamespace(
+            user_id=123,
+            is_active=1,
+            onboarding_completed=False,
+            phone_number="+821012345678",
+            name="테스트",
+            email="test@example.com",
+        )
         with patch("app.core.security.get_settings", return_value=SETTINGS), patch(
             "app.api.auth.get_user_by_id", new=AsyncMock(return_value=user)
         ) as lookup:
             response = await current_user(request, HTTPAuthorizationCredentials(scheme="Bearer", credentials=token), AsyncMock())
         self.assertEqual(lookup.call_args.args[1], 123)
-        self.assertEqual(json.loads(response.body)["data"], {"user_id": "123", "onboarding_completed": False})
+        self.assertEqual(
+            json.loads(response.body)["data"],
+            {
+                "user_id": "123",
+                "onboarding_completed": False,
+                "phone_number": "+821012345678",
+                "name": "테스트",
+                "email": "test@example.com",
+            },
+        )
 
     async def test_me_rejects_missing_invalid_and_expired_token(self):
         expired = SETTINGS.model_copy(update={"access_token_expire_minutes": -1})

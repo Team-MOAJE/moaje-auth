@@ -118,27 +118,6 @@ class PinCredential(Base):
     user: Mapped["User"] = relationship("User", back_populates="pin_credential")
 
 
-class SmsVerification(Base):
-    __tablename__ = "sms_verifications"
-    __table_args__ = (
-        Index("ix_sms_verifications_phone_purpose", "phone_number", "purpose"),
-        Index("ix_sms_verifications_expires_at", "expires_at"),
-        UniqueConstraint("verification_token_hash", name="uq_sms_verifications_token_hash"),
-        {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
-    )
-
-    verification_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    phone_number: Mapped[str] = mapped_column(String(20), nullable=False)
-    purpose: Mapped[str] = mapped_column(String(20), nullable=False)
-    code_digest: Mapped[str] = mapped_column(String(64), nullable=False)
-    verification_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    failed_attempts: Mapped[int] = mapped_column(INTEGER, nullable=False, server_default="0")
-    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
-
-
 class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
     __table_args__ = (

@@ -23,15 +23,13 @@ from app.schemas.auth import (
     LoginRequest,
     LogoutRequest,
     MessageResponse,
-    PinResetRequest,
+    PinChangeRequest,
+    UpdateProfileRequest,
+    WithdrawRequest,
     RefreshRequest,
     RegisterRequest,
     RegisterResponse,
     SessionUnlockRequest,
-    SmsRequest,
-    SmsRequestResponse,
-    SmsVerifyRequest,
-    SmsVerifyResponse,
     TokenResponse,
     ValidateAccountTokenRequest,
     ValidateAccountTokenResponse,
@@ -45,96 +43,16 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 bearer_auth = HTTPBearer(auto_error=False)
 
 
-@router.post("/sms/request", response_model=ApiResponse[SmsRequestResponse])
-async def request_sms(
-    request: Request,
-    payload: SmsRequest,
-    db: AsyncSession = Depends(get_db),
-) -> JSONResponse:
+def _authenticated_user_id(
+    credentials: HTTPAuthorizationCredentials | None,
+) -> int:
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="Bearer token required")
     try:
-        result = await auth_service.request_sms_verification(
-            db,
-            phone_number=payload.phone_number,
-            purpose=payload.purpose,
-        )
-    except auth_service.DuplicateUserError as exc:
-        return error_response(
-            request,
-            status_code=409,
-            code="AUTH-409-002",
-            message="이미 가입된 번호입니다. 로그인해 주세요.",
-            reason=str(exc),
-        )
-    except auth_service.UserNotFoundError as exc:
-        return error_response(
-            request,
-            status_code=404,
-            code="AUTH-404-002",
-            message="가입된 사용자를 찾을 수 없습니다.",
-            reason=str(exc),
-        )
-    except auth_service.SmsDeliveryUnavailableError as exc:
-        return error_response(
-            request,
-            status_code=503,
-            code="AUTH-503-001",
-            message="SMS 발송 서비스를 사용할 수 없습니다.",
-            reason=str(exc),
-            required_action=REQUIRED_ACTION_RETRY_LATER,
-        )
-    except (ValueError, auth_service.SmsVerificationError) as exc:
-        return error_response(
-            request,
-            status_code=400,
-            code="AUTH-400-005",
-            message="전화번호를 확인해 주세요.",
-            reason=str(exc),
-        )
-    data = SmsRequestResponse(
-        verification_id=result.verification_id,
-        expires_in=result.expires_in,
-        dev_code=result.dev_code,
-    )
-    return success_response(
-        request,
-        status_code=200,
-        code="AUTH-200-008",
-        message="인증번호를 발송했습니다.",
-        data=data.model_dump(),
-    )
-
-
-@router.post("/sms/verify", response_model=ApiResponse[SmsVerifyResponse])
-async def verify_sms(
-    request: Request,
-    payload: SmsVerifyRequest,
-    db: AsyncSession = Depends(get_db),
-) -> JSONResponse:
-    try:
-        result = await auth_service.verify_sms_code(
-            db,
-            verification_id=payload.verification_id,
-            code=payload.code,
-        )
-    except auth_service.SmsVerificationError as exc:
-        return error_response(
-            request,
-            status_code=401,
-            code="AUTH-401-006",
-            message="SMS 인증에 실패했습니다.",
-            reason=str(exc),
-        )
-    data = SmsVerifyResponse(
-        verification_token=result.verification_token,
-        expires_in=result.expires_in,
-    )
-    return success_response(
-        request,
-        status_code=200,
-        code="AUTH-200-009",
-        message="SMS 인증이 완료되었습니다.",
-        data=data.model_dump(),
-    )
+        payload = validate_jwt(credentials.credentials)
+        return auth_service.parse_user_id(payload["sub"])
+    except (TokenValidationError, ValueError, KeyError, TypeError):
+        raise HTTPException(status_code=401, detail="Invalid access token") from None
 
 
 @router.get("/me", response_model=ApiResponse[CurrentUserResponse])
@@ -143,13 +61,7 @@ async def current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_auth),
     db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
-    if credentials is None:
-        raise HTTPException(status_code=401, detail="Bearer token required")
-    try:
-        payload = validate_jwt(credentials.credentials)
-        user_id = auth_service.parse_user_id(payload["sub"])
-    except (TokenValidationError, ValueError, KeyError, TypeError):
-        raise HTTPException(status_code=401, detail="Invalid access token") from None
+    user_id = _authenticated_user_id(credentials)
     user = await get_user_by_id(db, user_id)
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="User is unavailable")
@@ -161,7 +73,96 @@ async def current_user(
         data=CurrentUserResponse(
             user_id=str(user.user_id),
             onboarding_completed=user.onboarding_completed,
+            phone_number=user.phone_number,
+            name=user.name,
+            email=user.email,
         ).model_dump(),
+    )
+
+
+@router.patch("/me", response_model=ApiResponse[CurrentUserResponse])
+async def update_current_user(
+    request: Request,
+    payload: UpdateProfileRequest,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_auth),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    user_id = _authenticated_user_id(credentials)
+    try:
+        user = await auth_service.update_profile(
+            db,
+            user_id=user_id,
+            name=payload.name,
+            email=payload.email,
+            email_provided="email" in payload.model_fields_set,
+        )
+    except auth_service.UserNotFoundError as exc:
+        return error_response(
+            request,
+            status_code=404,
+            code="AUTH-404-001",
+            message="사용자를 찾을 수 없습니다.",
+            reason=str(exc),
+        )
+    except auth_service.DuplicateEmailError as exc:
+        return error_response(
+            request,
+            status_code=409,
+            code="AUTH-409-002",
+            message="이미 사용 중인 이메일입니다.",
+            reason=str(exc),
+        )
+    return success_response(
+        request,
+        status_code=200,
+        code="AUTH-200-012",
+        message="회원 정보가 수정되었습니다.",
+        data=CurrentUserResponse(
+            user_id=str(user.user_id),
+            onboarding_completed=user.onboarding_completed,
+            phone_number=user.phone_number,
+            name=user.name,
+            email=user.email,
+        ).model_dump(),
+    )
+
+
+@router.delete("/me", response_model=ApiResponse[MessageResponse])
+async def withdraw_current_user(
+    request: Request,
+    payload: WithdrawRequest,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_auth),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    user_id = _authenticated_user_id(credentials)
+    try:
+        await auth_service.withdraw_user(
+            db,
+            user_id=user_id,
+            current_pin=payload.current_pin,
+        )
+    except auth_service.PinLockedError as exc:
+        return error_response(
+            request,
+            status_code=423,
+            code="AUTH-423-001",
+            message="간편 비밀번호 인증이 잠겼습니다.",
+            reason=str(exc),
+        )
+    except (auth_service.UserNotFoundError, auth_service.InvalidCredentialsError) as exc:
+        return error_response(
+            request,
+            status_code=422,
+            code="AUTH-422-001",
+            message="현재 간편 비밀번호가 일치하지 않습니다.",
+            reason=str(exc),
+        )
+    return success_response(
+        request,
+        status_code=200,
+        code="AUTH-200-013",
+        message="회원 탈퇴가 완료되었습니다.",
+        data=MessageResponse(message="ok").model_dump(),
     )
 
 
@@ -178,7 +179,7 @@ async def register(
     try:
         result = await auth_service.register_phone_user(
             db,
-            verification_token=payload.verification_token,
+            phone_number=payload.phone_number,
             name=payload.name,
             pin=payload.pin,
             terms_version=payload.terms_version,
@@ -194,12 +195,12 @@ async def register(
             message="이미 가입된 사용자입니다.",
             reason=str(exc),
         )
-    except auth_service.SmsVerificationError as exc:
+    except auth_service.InvalidPhoneNumberError as exc:
         return error_response(
             request,
-            status_code=401,
-            code="AUTH-401-006",
-            message="SMS 인증이 필요합니다.",
+            status_code=400,
+            code="AUTH-400-005",
+            message="전화번호를 확인해 주세요.",
             reason=str(exc),
         )
 
@@ -230,16 +231,16 @@ async def login(
     try:
         tokens, onboarding_completed = await auth_service.login_phone_user(
             db,
-            verification_token=payload.verification_token,
+            phone_number=payload.phone_number,
             pin=payload.pin,
             device_info=payload.device_info,
         )
-    except auth_service.SmsVerificationError as exc:
+    except auth_service.InvalidPhoneNumberError as exc:
         return error_response(
             request,
-            status_code=401,
-            code="AUTH-401-006",
-            message="SMS 인증이 필요합니다.",
+            status_code=400,
+            code="AUTH-400-005",
+            message="전화번호를 확인해 주세요.",
             reason=str(exc),
         )
     except auth_service.PinLockedError as exc:
@@ -318,12 +319,22 @@ async def validate_bearer_token(
 async def create_account_token(
     request: Request,
     payload: CreateAccountTokenRequest,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_auth),
     db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
+    authenticated_user_id = _authenticated_user_id(credentials)
+    if authenticated_user_id != payload.user_id:
+        return error_response(
+            request,
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="AUTH-403-001",
+            message="다른 사용자의 계좌 토큰을 생성할 수 없습니다.",
+            reason="Authenticated user does not match requested user",
+        )
     try:
         result = await auth_service.create_account_token(
             db,
-            user_id=payload.user_id,
+            user_id=authenticated_user_id,
             account_number=payload.account_number,
         )
     except auth_service.UserNotFoundError as exc:
@@ -456,32 +467,35 @@ async def session_unlock(
     )
 
 
-@router.post("/pin/reset", response_model=ApiResponse[MessageResponse])
-async def pin_reset(
+@router.post("/pin/change", response_model=ApiResponse[MessageResponse])
+async def pin_change(
     request: Request,
-    payload: PinResetRequest,
+    payload: PinChangeRequest,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_auth),
     db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
+    user_id = _authenticated_user_id(credentials)
     try:
-        await auth_service.reset_pin(
+        await auth_service.change_pin(
             db,
-            verification_token=payload.verification_token,
+            user_id=user_id,
+            current_pin=payload.current_pin,
             new_pin=payload.new_pin,
         )
-    except auth_service.SmsVerificationError as exc:
+    except auth_service.PinLockedError as exc:
         return error_response(
             request,
-            status_code=401,
-            code="AUTH-401-006",
-            message="SMS 인증이 필요합니다.",
+            status_code=423,
+            code="AUTH-423-001",
+            message="간편 비밀번호 인증이 잠겼습니다.",
             reason=str(exc),
         )
-    except auth_service.UserNotFoundError as exc:
+    except (auth_service.UserNotFoundError, auth_service.InvalidCredentialsError) as exc:
         return error_response(
             request,
-            status_code=404,
-            code="AUTH-404-002",
-            message="가입된 사용자를 찾을 수 없습니다.",
+            status_code=422,
+            code="AUTH-422-001",
+            message="현재 간편 비밀번호가 일치하지 않습니다.",
             reason=str(exc),
         )
     return success_response(

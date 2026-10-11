@@ -7,18 +7,23 @@ from contextlib import asynccontextmanager
 from typing import Any
 from uuid import uuid4
 
-from fastapi import FastAPI, Request, status
+from fastapi import Depends, FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import router as auth_router
+from app.api.jwks import router as jwks_router
 from app.core.responses import (
     REQUIRED_ACTION_NONE,
     REQUIRED_ACTION_RETRY_LATER,
     error_response,
     success_response,
 )
+from app.db.session import get_db
 from app.rpc.server import create_server
 from app.schemas.auth import HealthResponse
 from app.schemas.common import ApiResponse
@@ -36,6 +41,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="moaje-auth", lifespan=lifespan)
 app.include_router(auth_router)
+app.include_router(jwks_router)
 
 
 @app.middleware("http")
@@ -126,4 +132,29 @@ def health(request: Request) -> JSONResponse:
         code="AUTH-200-000",
         message="Auth 서비스가 정상 동작 중입니다.",
         data={"status": "ok"},
+    )
+
+
+@app.get("/ready", response_model=ApiResponse[HealthResponse])
+async def readiness(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    try:
+        await db.execute(text("SELECT 1"))
+    except SQLAlchemyError:
+        return error_response(
+            request,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="AUTH-503-001",
+            message="Auth 서비스가 아직 준비되지 않았습니다.",
+            reason="Database connection is unavailable",
+            required_action=REQUIRED_ACTION_RETRY_LATER,
+        )
+    return success_response(
+        request,
+        status_code=status.HTTP_200_OK,
+        code="AUTH-200-014",
+        message="Auth 서비스가 요청을 처리할 준비가 되었습니다.",
+        data={"status": "ready"},
     )
