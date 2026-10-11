@@ -55,6 +55,22 @@ class PhoneAuthTests(unittest.IsolatedAsyncioTestCase):
                 new_pin_confirm="111111",
             )
 
+    def test_registration_rejects_blank_name_and_invalid_email(self):
+        base = {
+            "phone_number": "01012345678",
+            "name": "테스트",
+            "pin": "123456",
+            "pin_confirm": "123456",
+            "terms_agreed": True,
+            "privacy_agreed": True,
+            "terms_version": "v1",
+            "privacy_version": "v1",
+        }
+        with self.assertRaises(ValidationError):
+            RegisterRequest(**(base | {"name": "   "}))
+        with self.assertRaises(ValidationError):
+            RegisterRequest(**base, email="invalid")
+
     async def test_registration_checks_normalized_phone_without_sms(self):
         db = AsyncMock()
         with patch.object(

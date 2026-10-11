@@ -121,6 +121,19 @@ async def revoke_user_refresh_tokens(db: AsyncSession, user_id: int) -> int:
     return result.rowcount or 0
 
 
+async def deactivate_user_account_tokens(db: AsyncSession, user_id: int) -> int:
+    stmt = (
+        update(AccountTokenMapping)
+        .where(
+            AccountTokenMapping.user_id == user_id,
+            AccountTokenMapping.is_active == 1,
+        )
+        .values(is_active=0)
+    )
+    result = cast(CursorResult, await db.execute(stmt))
+    return result.rowcount or 0
+
+
 async def create_account_token_mapping(
     db: AsyncSession,
     *,

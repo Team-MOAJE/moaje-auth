@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 
 
 class RegisterRequest(BaseModel):
@@ -16,7 +19,12 @@ class RegisterRequest(BaseModel):
     privacy_agreed: Literal[True]
     terms_version: str = Field(..., min_length=1, max_length=50)
     privacy_version: str = Field(..., min_length=1, max_length=50)
-    email: str | None = Field(default=None, min_length=3, max_length=255)
+    email: str | None = Field(
+        default=None,
+        min_length=3,
+        max_length=255,
+        pattern=EMAIL_PATTERN,
+    )
     device_info: str | None = Field(default=None, max_length=500)
 
     @model_validator(mode="after")
@@ -25,10 +33,51 @@ class RegisterRequest(BaseModel):
             raise ValueError("간편 비밀번호가 일치하지 않습니다.")
         return self
 
+    @field_validator("name")
+    @classmethod
+    def name_has_content(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("이름을 입력해 주세요.")
+        return value
+
 
 class CurrentUserResponse(BaseModel):
     user_id: str
     onboarding_completed: bool
+    phone_number: str | None = None
+    name: str | None = None
+    email: str | None = None
+
+
+class UpdateProfileRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    email: str | None = Field(
+        default=None,
+        min_length=3,
+        max_length=255,
+        pattern=EMAIL_PATTERN,
+    )
+
+    @model_validator(mode="after")
+    def contains_update(self) -> "UpdateProfileRequest":
+        if not self.model_fields_set:
+            raise ValueError("수정할 이름 또는 이메일을 입력해 주세요.")
+        return self
+
+    @field_validator("name")
+    @classmethod
+    def name_has_content(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("이름을 입력해 주세요.")
+        return value
+
+
+class WithdrawRequest(BaseModel):
+    current_pin: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
 
 
 class RegisterResponse(BaseModel):

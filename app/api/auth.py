@@ -24,6 +24,8 @@ from app.schemas.auth import (
     LogoutRequest,
     MessageResponse,
     PinChangeRequest,
+    UpdateProfileRequest,
+    WithdrawRequest,
     RefreshRequest,
     RegisterRequest,
     RegisterResponse,
@@ -71,7 +73,96 @@ async def current_user(
         data=CurrentUserResponse(
             user_id=str(user.user_id),
             onboarding_completed=user.onboarding_completed,
+            phone_number=user.phone_number,
+            name=user.name,
+            email=user.email,
         ).model_dump(),
+    )
+
+
+@router.patch("/me", response_model=ApiResponse[CurrentUserResponse])
+async def update_current_user(
+    request: Request,
+    payload: UpdateProfileRequest,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_auth),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    user_id = _authenticated_user_id(credentials)
+    try:
+        user = await auth_service.update_profile(
+            db,
+            user_id=user_id,
+            name=payload.name,
+            email=payload.email,
+            email_provided="email" in payload.model_fields_set,
+        )
+    except auth_service.UserNotFoundError as exc:
+        return error_response(
+            request,
+            status_code=404,
+            code="AUTH-404-001",
+            message="사용자를 찾을 수 없습니다.",
+            reason=str(exc),
+        )
+    except auth_service.DuplicateEmailError as exc:
+        return error_response(
+            request,
+            status_code=409,
+            code="AUTH-409-002",
+            message="이미 사용 중인 이메일입니다.",
+            reason=str(exc),
+        )
+    return success_response(
+        request,
+        status_code=200,
+        code="AUTH-200-012",
+        message="회원 정보가 수정되었습니다.",
+        data=CurrentUserResponse(
+            user_id=str(user.user_id),
+            onboarding_completed=user.onboarding_completed,
+            phone_number=user.phone_number,
+            name=user.name,
+            email=user.email,
+        ).model_dump(),
+    )
+
+
+@router.delete("/me", response_model=ApiResponse[MessageResponse])
+async def withdraw_current_user(
+    request: Request,
+    payload: WithdrawRequest,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_auth),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    user_id = _authenticated_user_id(credentials)
+    try:
+        await auth_service.withdraw_user(
+            db,
+            user_id=user_id,
+            current_pin=payload.current_pin,
+        )
+    except auth_service.PinLockedError as exc:
+        return error_response(
+            request,
+            status_code=423,
+            code="AUTH-423-001",
+            message="간편 비밀번호 인증이 잠겼습니다.",
+            reason=str(exc),
+        )
+    except (auth_service.UserNotFoundError, auth_service.InvalidCredentialsError) as exc:
+        return error_response(
+            request,
+            status_code=422,
+            code="AUTH-422-001",
+            message="현재 간편 비밀번호가 일치하지 않습니다.",
+            reason=str(exc),
+        )
+    return success_response(
+        request,
+        status_code=200,
+        code="AUTH-200-013",
+        message="회원 탈퇴가 완료되었습니다.",
+        data=MessageResponse(message="ok").model_dump(),
     )
 
 

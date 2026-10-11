@@ -23,6 +23,7 @@ from app.core.security import (
     verify_pin,
 )
 from app.core.security import validate_access_token as validate_jwt_access_token
+from app.models.auth import User
 from app.repositories import auth as auth_repository
 
 
@@ -60,6 +61,10 @@ class AccountTokenError(AuthError):
 
 class PinLockedError(AuthError):
     default_message = "간편 비밀번호 인증이 잠겼습니다."
+
+
+class DuplicateEmailError(AuthError):
+    default_message = "이미 사용 중인 이메일입니다."
 
 
 @dataclass(frozen=True)
@@ -211,6 +216,7 @@ async def register_phone_user(
     device_info: str | None = None,
 ) -> RegisteredUser:
     normalized_phone = normalize_phone_number(phone_number)
+    normalized_email = email.strip().lower() if email is not None else None
     if await auth_repository.get_user_by_phone(db, normalized_phone):
         raise DuplicateUserError("이미 가입된 번호입니다. 로그인해 주세요.")
     try:
@@ -219,7 +225,7 @@ async def register_phone_user(
             user_id=generate_user_id(),
             phone_number=normalized_phone,
             name=name.strip(),
-            email=email,
+            email=normalized_email,
             pin_hash=hash_pin(pin),
             terms_version=terms_version,
             privacy_version=privacy_version,
@@ -341,6 +347,59 @@ async def change_pin(
     user.pin_credential.locked_until = None
     user.pin_credential.last_changed_at = utc_now().replace(tzinfo=None)
     await auth_repository.revoke_user_refresh_tokens(db, user.user_id)
+    await db.commit()
+
+
+async def update_profile(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    name: str | None,
+    email: str | None,
+    email_provided: bool,
+) -> User:
+    user = await auth_repository.get_user_by_id(db, user_id)
+    if not user or not user.is_active:
+        raise UserNotFoundError()
+
+    if name is not None:
+        user.name = name.strip()
+    if email_provided:
+        normalized_email = email.strip().lower() if email is not None else None
+        if normalized_email:
+            existing = await auth_repository.get_user_by_email(db, normalized_email)
+            if existing and existing.user_id != user_id:
+                raise DuplicateEmailError()
+        user.email = normalized_email
+
+    try:
+        await db.commit()
+        await db.refresh(user)
+    except IntegrityError as exc:
+        await db.rollback()
+        raise DuplicateEmailError() from exc
+    return user
+
+
+async def withdraw_user(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    current_pin: str,
+    settings: Settings | None = None,
+) -> None:
+    settings = settings or get_settings()
+    user = await auth_repository.get_user_by_id(db, user_id)
+    if not user or not user.is_active:
+        raise UserNotFoundError()
+    await _verify_user_pin(db, user=user, pin=current_pin, settings=settings)
+
+    user.is_active = 0
+    user.phone_number = None
+    user.email = None
+    user.name = None
+    await auth_repository.revoke_user_refresh_tokens(db, user_id)
+    await auth_repository.deactivate_user_account_tokens(db, user_id)
     await db.commit()
 
 

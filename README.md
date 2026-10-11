@@ -142,10 +142,12 @@ python -c "import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).dec
 
 | Method | Path | 설명 |
 | --- | --- | --- |
-| GET | `/api/auth/me` | Bearer JWT로 본인 ID·온보딩 완료 상태 조회 |
+| GET | `/api/auth/me` | Bearer JWT로 본인 ID, 온보딩 완료 상태 조회 |
+| PATCH | `/api/auth/me` | 이름, 이메일 수정 |
+| DELETE | `/api/auth/me` | 현재 PIN 확인 후 회원 탈퇴, 개인정보 제거 및 세션 폐기 |
 | GET | `/.well-known/jwks.json` | Gateway JWT 검증용 RSA 공개키 조회 |
-| POST | `/api/auth/register` | 전화번호·이름·선택 이메일·6자리 PIN으로 회원가입 및 세션 발급 |
-| POST | `/api/auth/login` | 전화번호·PIN으로 로그인 및 세션 발급 |
+| POST | `/api/auth/register` | 전화번호, 이름, 선택 이메일, 6자리 PIN으로 회원가입 및 세션 발급 |
+| POST | `/api/auth/login` | 전화번호, PIN으로 로그인 및 세션 발급 |
 | POST | `/api/auth/session/unlock` | 유효한 세션과 PIN으로 앱 잠금 해제 및 토큰 교체 |
 | POST | `/api/auth/pin/change` | Bearer JWT와 현재 PIN 확인 후 PIN 변경 및 기존 세션 전체 폐기 |
 | POST | `/api/auth/refresh` | refresh token rotation |
@@ -155,6 +157,7 @@ python -c "import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).dec
 | POST | `/api/auth/account-token` | account token 생성 |
 | POST | `/api/auth/account-token/validate` | account token 검증 |
 | GET | `/health` | 헬스체크 |
+| GET | `/ready` | MySQL 연결을 포함한 요청 처리 준비 상태 확인 |
 
 ### Docker 실행
 
@@ -180,9 +183,9 @@ Compose 환경에서는 MySQL이 호스트 `3307` 포트로 노출됩니다.
 
 ### 전화번호 기반 계정 흐름
 
-전화번호는 E.164 형식으로 정규화하고 형식·중복만 검사함. 소유 인증값으로 취급하지 않으며 로그인 식별자로 사용함. JWT `sub`에는 내부 `user_id`를 사용함.
+전화번호는 E.164 형식으로 정규화하고 형식, 중복만 검사함. 소유 인증값으로 취급하지 않으며 로그인 식별자로 사용함. JWT `sub`에는 내부 `user_id`를 사용함.
 
-회원가입은 전화번호·이름·선택 이메일·6자리 PIN·약관 동의를 받음. 성별과 별도 아이디는 받지 않음.
+회원가입은 전화번호, 이름, 선택 이메일, 6자리 PIN, 약관 동의를 받음. 성별과 별도 아이디는 받지 않음.
 
 PIN은 숫자 6자리이며 bcrypt 해시만 저장함. 실패 잠금과 PIN 변경은 서버에서 처리하고 변경 시 모든 Refresh Token을 폐기함. SMS를 사용하지 않아 PIN 분실 재설정은 제공하지 않음.
 
@@ -190,9 +193,14 @@ PIN은 숫자 6자리이며 bcrypt 해시만 저장함. 실패 잠금과 PIN 변
 
 ### Access Token
 
-- 클라이언트는 다음 형식으로 Access Token을 전달한다.
+- 클라이언트는 다음 형식으로 Access Token을 전달함.
 
 `Authorization: Bearer {access_token}`
+
+- 기본 만료 시간은 30분이며 `ACCESS_TOKEN_EXPIRE_MINUTES`로 설정함.
+- 로그아웃 또는 회원 탈퇴 시 Refresh Token은 즉시 폐기함.
+- 이미 발급된 Access Token은 별도 blacklist를 사용하지 않아 만료 시점까지 서명 검증을 통과할 수 있음.
+- 즉시 차단이 필요하면 Redis blacklist를 추가하며, 현재 범위에서는 짧은 만료 시간과 Refresh Token 폐기를 사용함.
 
 ### JWT Claim (Principal Update)
 
@@ -404,8 +412,9 @@ Redis 사용 용도:
 
 - FastAPI health check
 - Alembic 기반 Auth DB 스키마
-- 전화번호 형식·중복 검사 및 6자리 PIN 기반 회원가입/로그인
+- 전화번호 형식, 중복 검사 및 6자리 PIN 기반 회원가입/로그인
 - 서버 기반 PIN 실패 잠금, 로그인 상태 PIN 변경 및 세션 전체 폐기
+- 이름, 이메일 수정 및 PIN 확인 기반 회원 탈퇴
 - JWT Access Token 발급 및 검증
 - Refresh Token 해시 저장
 - Refresh Token Rotation
